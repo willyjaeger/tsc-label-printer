@@ -7,6 +7,8 @@ import threading
 import webbrowser
 import time
 import secrets
+import hashlib
+import base64
 
 try:
     import requests as http
@@ -39,6 +41,18 @@ ML_AUTH_URL  = 'https://auth.mercadolibre.com.ar/authorization'
 ML_TOKEN_URL = 'https://api.mercadolibre.com/oauth/token'
 ML_API       = 'https://api.mercadolibre.com'
 REDIRECT_URI = 'https://willyjaeger.github.io/tsc-label-printer/callback.html'
+
+# PKCE: almacena {state: code_verifier} durante el flujo OAuth (en memoria, vida corta)
+_pkce_store = {}
+
+
+def _pkce_pair():
+    """Genera code_verifier y code_challenge (S256) para PKCE."""
+    verifier  = base64.urlsafe_b64encode(os.urandom(32)).decode().rstrip('=')
+    challenge = base64.urlsafe_b64encode(
+        hashlib.sha256(verifier.encode()).digest()
+    ).decode().rstrip('=')
+    return verifier, challenge
 
 
 # ── Config ─────────────────────────────────────────────────────────────────────
@@ -228,32 +242,42 @@ def auth_login():
     if not cfg.get('ml_client_id'):
         return redirect('/?error=Configurar+App+ID+primero')
     state = secrets.token_hex(16)
+    verifier, challenge = _pkce_pair()
+    _pkce_store[state] = verifier
     url = (f"{ML_AUTH_URL}?response_type=code"
            f"&client_id={cfg['ml_client_id']}"
            f"&redirect_uri={REDIRECT_URI}"
-           f"&state={state}")
+           f"&state={state}"
+           f"&code_challenge={challenge}"
+           f"&code_challenge_method=S256")
     return redirect(url)
 
 
 @app.route('/auth/callback')
 def auth_callback():
     code  = request.args.get('code')
+    state = request.args.get('state', '')
     error = request.args.get('error')
     if error or not code:
         return redirect(f'/?tab=orders&error={error or "sin_codigo"}')
 
+    verifier = _pkce_store.pop(state, None)
     cfg = load_config()
     try:
-        r = http.post(ML_TOKEN_URL, data={
+        payload = {
             'grant_type':    'authorization_code',
             'client_id':     cfg['ml_client_id'],
             'client_secret': cfg['ml_client_secret'],
             'code':          code,
             'redirect_uri':  REDIRECT_URI,
-        }, timeout=15)
+        }
+        if verifier:
+            payload['code_verifier'] = verifier
+
+        r = http.post(ML_TOKEN_URL, data=payload, timeout=15)
         data = r.json()
         if 'access_token' not in data:
-            return redirect(f'/?tab=orders&error=token_error')
+            return redirect('/?tab=orders&error=token_error')
         cfg['ml_access_token']     = data['access_token']
         cfg['ml_refresh_token']    = data.get('refresh_token')
         cfg['ml_token_expires_at'] = time.time() + data.get('expires_in', 21600)

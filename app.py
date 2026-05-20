@@ -38,7 +38,7 @@ DEFAULT_CONFIG = {
 ML_AUTH_URL  = 'https://auth.mercadolibre.com.ar/authorization'
 ML_TOKEN_URL = 'https://api.mercadolibre.com/oauth/token'
 ML_API       = 'https://api.mercadolibre.com'
-REDIRECT_URI = 'http://localhost:5050/auth/callback'
+REDIRECT_URI = 'https://willyjaeger.github.io/tsc-label-printer/callback.html'
 
 
 # ── Config ─────────────────────────────────────────────────────────────────────

@@ -36,6 +36,8 @@ python -m PyInstaller ^
     --hidden-import=flask ^
     --hidden-import=werkzeug ^
     --hidden-import=tkinter ^
+    --hidden-import=requests ^
+    --collect-all=requests ^
     --name "TSC-Label-Printer" ^
     app.py
 

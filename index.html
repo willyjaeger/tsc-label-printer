@@ -6,297 +6,206 @@
 <title>TSC Label Printer</title>
 <style>
 :root {
-  --bg:       #111318;
-  --surface:  #1c1e26;
-  --surface2: #252830;
-  --border:   rgba(255,255,255,0.07);
-  --accent:   #f5a623;
-  --accent-d: #c97f10;
-  --text:     #e8e9ed;
-  --text2:    #8a8d9a;
-  --success:  #4caf88;
-  --error:    #e05555;
-  --warning:  #f5a623;
-  --r:        10px;
+  --bg:      #111318;
+  --surface: #1c1e26;
+  --surf2:   #252830;
+  --surf3:   #2e3140;
+  --border:  rgba(255,255,255,0.07);
+  --accent:  #f5a623;
+  --accent-d:#c97f10;
+  --ml:      #ffe600;
+  --ml-d:    #ccb800;
+  --text:    #e8e9ed;
+  --text2:   #8a8d9a;
+  --ok:      #4caf88;
+  --err:     #e05555;
+  --warn:    #f5a623;
+  --r:       10px;
 }
-
 * { box-sizing: border-box; margin: 0; padding: 0; }
-
 body {
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
   background: var(--bg);
   color: var(--text);
   min-height: 100vh;
-  padding: 28px 20px;
-  max-width: 580px;
+  padding: 24px 18px 40px;
+  max-width: 620px;
   margin: 0 auto;
 }
 
-/* ── Header ───────────────────── */
-header {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin-bottom: 28px;
-}
-header h1 {
-  font-size: 1.25rem;
-  font-weight: 700;
-  letter-spacing: -0.01em;
-}
-header .sub {
-  font-size: 0.78rem;
-  color: var(--text2);
-  margin-top: 1px;
-}
-.printer-icon {
-  width: 40px; height: 40px;
-  background: linear-gradient(135deg, #f5a62322, #f5a62308);
-  border: 1px solid #f5a62333;
-  border-radius: 10px;
-  display: flex; align-items: center; justify-content: center;
-  flex-shrink: 0;
+/* ── Header ── */
+header { display:flex; align-items:center; gap:12px; margin-bottom:22px; }
+header h1 { font-size:1.2rem; font-weight:700; }
+header .sub { font-size:.75rem; color:var(--text2); margin-top:2px; }
+.ico-wrap {
+  width:38px; height:38px; border-radius:9px; flex-shrink:0;
+  background:linear-gradient(135deg,#f5a62320,#f5a62306);
+  border:1px solid #f5a62330;
+  display:flex; align-items:center; justify-content:center;
 }
 
-/* ── Card ─────────────────────── */
-.card {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--r);
-  padding: 18px;
-  margin-bottom: 14px;
+/* ── Tabs ── */
+.tabs { display:flex; gap:4px; margin-bottom:16px; background:var(--surface); border-radius:var(--r); padding:4px; border:1px solid var(--border); }
+.tab-btn {
+  flex:1; padding:8px; border:none; border-radius:7px; font-size:.85rem; font-weight:600;
+  cursor:pointer; color:var(--text2); background:transparent; transition:all .15s;
 }
+.tab-btn:hover { color:var(--text); background:var(--surf2); }
+.tab-btn.active { background:var(--surf2); color:var(--text); }
+.tab-content { display:none; }
+.tab-content.active { display:block; }
 
-/* ── Labels / Inputs ──────────── */
-label {
-  display: block;
-  font-size: 0.71rem;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--text2);
-  margin-bottom: 6px;
-}
-input[type=text],
-input[type=number],
-select {
-  width: 100%;
-  padding: 9px 11px;
-  background: var(--surface2);
-  border: 1px solid var(--border);
-  border-radius: 7px;
-  color: var(--text);
-  font-size: 0.9rem;
-  transition: border-color 0.15s;
-  appearance: none;
-}
-input:focus, select:focus {
-  outline: none;
-  border-color: var(--accent);
-}
-select { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%238a8d9a'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 10px center; padding-right: 28px; }
-select option { background: #1c1e26; }
-input[type=number]::-webkit-inner-spin-button { opacity: 0.4; }
+/* ── Card ── */
+.card { background:var(--surface); border:1px solid var(--border); border-radius:var(--r); padding:18px; margin-bottom:14px; }
 
-/* ── Buttons ──────────────────── */
-button {
-  padding: 9px 16px;
-  border: none;
-  border-radius: 7px;
-  font-size: 0.85rem;
-  font-weight: 600;
-  cursor: pointer;
-  transition: all 0.15s;
-  white-space: nowrap;
+/* ── Form elements ── */
+label { display:block; font-size:.71rem; font-weight:600; text-transform:uppercase; letter-spacing:.06em; color:var(--text2); margin-bottom:5px; }
+input, select {
+  width:100%; padding:9px 11px; background:var(--surf2); border:1px solid var(--border);
+  border-radius:7px; color:var(--text); font-size:.88rem; transition:border-color .15s; appearance:none;
 }
-button:active { transform: scale(0.97); }
-.btn-primary   { background: var(--accent); color: #111; }
-.btn-primary:hover { background: var(--accent-d); }
-.btn-secondary { background: var(--surface2); color: var(--text); border: 1px solid var(--border); }
-.btn-secondary:hover { background: #2e3140; }
-.btn-ghost     { background: transparent; color: var(--text2); font-size: 0.8rem; padding: 6px 10px; }
-.btn-ghost:hover { color: var(--text); }
-.btn-danger    { background: rgba(224,85,85,0.15); color: var(--error); border: 1px solid rgba(224,85,85,0.25); }
-.btn-danger:hover { background: rgba(224,85,85,0.25); }
+input:focus, select:focus { outline:none; border-color:var(--accent); }
+select { background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%238a8d9a'/%3E%3C/svg%3E"); background-repeat:no-repeat; background-position:right 10px center; padding-right:28px; }
+select option { background:#1c1e26; }
 
-/* ── Config row ───────────────── */
-.config-row {
-  display: flex;
-  gap: 10px;
-  align-items: flex-end;
-}
-.config-row .f-grow { flex: 1; }
-.config-row .f-port { flex: 0 0 90px; }
-.config-row .f-btn  { flex-shrink: 0; }
+/* ── Buttons ── */
+button { padding:9px 16px; border:none; border-radius:7px; font-size:.85rem; font-weight:600; cursor:pointer; transition:all .15s; white-space:nowrap; }
+button:active { transform:scale(.97); }
+.btn-p  { background:var(--accent);   color:#111; }
+.btn-p:hover  { background:var(--accent-d); }
+.btn-ml { background:var(--ml);       color:#111; }
+.btn-ml:hover { background:var(--ml-d); }
+.btn-s  { background:var(--surf2);    color:var(--text); border:1px solid var(--border); }
+.btn-s:hover  { background:var(--surf3); }
+.btn-d  { background:rgba(224,85,85,.1); color:var(--err); border:1px solid rgba(224,85,85,.2); }
+.btn-d:hover  { background:rgba(224,85,85,.2); }
+.btn-sm { padding:6px 12px; font-size:.8rem; }
 
+/* ── Config row ── */
+.row { display:flex; gap:10px; align-items:flex-end; }
+.f1 { flex:1; } .fp { flex:0 0 90px; }
 .saved-pill {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 3px 10px;
-  background: rgba(76,175,136,0.15);
-  color: var(--success);
-  border-radius: 20px;
-  font-size: 0.72rem;
-  font-weight: 600;
-  margin-left: 8px;
-  opacity: 0;
-  transition: opacity 0.3s;
-  pointer-events: none;
-  vertical-align: middle;
+  display:inline-flex; align-items:center; padding:2px 9px;
+  background:rgba(76,175,136,.15); color:var(--ok);
+  border-radius:20px; font-size:.7rem; font-weight:600; margin-left:8px;
+  opacity:0; transition:opacity .3s; pointer-events:none; vertical-align:middle;
 }
-.saved-pill.show { opacity: 1; }
+.saved-pill.show { opacity:1; }
 
-/* ── Drop zone ────────────────── */
+/* ── Drop zone ── */
 .drop-zone {
-  position: relative;
-  border: 2px dashed rgba(255,255,255,0.11);
-  border-radius: var(--r);
-  padding: 48px 20px;
-  text-align: center;
-  cursor: pointer;
-  transition: border-color 0.2s, background 0.2s, transform 0.15s;
-  user-select: none;
+  position:relative; border:2px dashed rgba(255,255,255,.1); border-radius:var(--r);
+  padding:44px 20px; text-align:center; cursor:pointer;
+  transition:border-color .2s, background .2s, transform .15s;
 }
-.drop-zone:hover {
-  border-color: rgba(245,166,35,0.4);
-  background: rgba(245,166,35,0.04);
-}
-.drop-zone.drag-over {
-  border-color: var(--accent);
-  background: rgba(245,166,35,0.08);
-  transform: scale(1.012);
-}
-.drop-zone.printing {
-  border-color: rgba(76,175,136,0.4);
-  background: rgba(76,175,136,0.05);
-}
-#fileInput {
-  position: absolute;
-  inset: 0;
-  opacity: 0;
-  cursor: pointer;
-  width: 100%;
-  height: 100%;
-  font-size: 0;
-}
-.drop-icon { font-size: 2.2rem; display: block; margin-bottom: 10px; line-height: 1; }
-.drop-title { font-size: 1rem; font-weight: 600; margin-bottom: 5px; }
-.drop-sub   { font-size: 0.78rem; color: var(--text2); }
+.drop-zone:hover { border-color:rgba(245,166,35,.4); background:rgba(245,166,35,.04); }
+.drop-zone.drag-over { border-color:var(--accent); background:rgba(245,166,35,.08); transform:scale(1.01); }
+#fileInput { position:absolute; inset:0; opacity:0; cursor:pointer; width:100%; height:100%; font-size:0; }
+.drop-icon { font-size:2rem; display:block; margin-bottom:8px; }
+.drop-title { font-size:.95rem; font-weight:600; margin-bottom:4px; }
+.drop-sub { font-size:.76rem; color:var(--text2); }
 
-/* ── Status bar ───────────────── */
+/* ── Status bar ── */
 .status-bar {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  padding: 10px 14px;
-  border-radius: 7px;
-  font-size: 0.85rem;
-  min-height: 40px;
-  margin-top: 12px;
-  transition: background 0.25s, color 0.25s;
+  display:flex; align-items:center; gap:8px; padding:10px 13px;
+  border-radius:7px; font-size:.84rem; min-height:40px; margin-top:12px;
+  transition:background .25s, color .25s;
 }
-.status-bar.idle    { background: var(--surface2); color: var(--text2); }
-.status-bar.loading { background: rgba(245,166,35,0.1); color: var(--warning); }
-.status-bar.success { background: rgba(76,175,136,0.1); color: var(--success); }
-.status-bar.error   { background: rgba(224,85,85,0.1);  color: var(--error); }
-.s-dot {
-  width: 7px; height: 7px;
-  border-radius: 50%;
-  flex-shrink: 0;
-}
-.idle    .s-dot { background: var(--text2); }
-.loading .s-dot { background: var(--warning); animation: blink 0.9s ease-in-out infinite; }
-.success .s-dot { background: var(--success); }
-.error   .s-dot { background: var(--error); }
-@keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.2} }
+.status-bar.idle    { background:var(--surf2);           color:var(--text2); }
+.status-bar.loading { background:rgba(245,166,35,.1);    color:var(--warn);  }
+.status-bar.ok      { background:rgba(76,175,136,.1);    color:var(--ok);    }
+.status-bar.err     { background:rgba(224,85,85,.1);     color:var(--err);   }
+.s-dot { width:7px; height:7px; border-radius:50%; flex-shrink:0; }
+.idle    .s-dot { background:var(--text2); }
+.loading .s-dot { background:var(--warn); animation:blink .9s ease-in-out infinite; }
+.ok      .s-dot { background:var(--ok); }
+.err     .s-dot { background:var(--err); }
+@keyframes blink { 0%,100%{opacity:1} 50%{opacity:.2} }
 
-/* ── Last file ────────────────── */
-.last-file {
-  font-size: 0.78rem;
-  color: var(--text2);
-  text-align: center;
-  margin-top: 10px;
-  padding: 7px 12px;
-  background: var(--surface2);
-  border-radius: 6px;
-  display: none;
+/* ── Collapsible ── */
+.col-toggle {
+  display:flex; align-items:center; justify-content:space-between;
+  cursor:pointer; background:none; border:none; color:var(--text2);
+  font-size:.71rem; font-weight:600; text-transform:uppercase; letter-spacing:.06em;
+  width:100%; padding:0;
 }
-.last-file strong { color: var(--text); font-weight: 500; }
+.col-toggle:hover { color:var(--text); }
+.col-toggle:active { transform:none; }
+.col-arrow { transition:transform .2s; }
+.col-arrow.open { transform:rotate(180deg); }
+.collapsible { overflow:hidden; max-height:0; transition:max-height .3s ease; }
+.collapsible.open { max-height:600px; }
+.col-body { padding-top:16px; }
+.cal-grid { display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:14px; }
+.hint { font-size:.69rem; color:var(--text2); margin-top:4px; line-height:1.4; }
+.cal-actions { display:flex; gap:8px; flex-wrap:wrap; }
 
-/* ── Calibration ──────────────── */
-.section-toggle {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  cursor: pointer;
-  background: none;
-  border: none;
-  color: var(--text2);
-  font-size: 0.71rem;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  width: 100%;
-  padding: 0;
-  gap: 8px;
+/* ── ML Login card ── */
+.ml-login-card {
+  text-align:center; padding:36px 20px;
 }
-.section-toggle:hover { color: var(--text); }
-.section-toggle:active { transform: none; }
-.toggle-arrow { transition: transform 0.2s; font-size: 0.9rem; }
-.toggle-arrow.open { transform: rotate(180deg); }
+.ml-logo { font-size:2.2rem; margin-bottom:12px; }
+.ml-login-title { font-size:1rem; font-weight:700; margin-bottom:6px; }
+.ml-login-sub { font-size:.8rem; color:var(--text2); margin-bottom:20px; line-height:1.5; }
 
-.collapsible {
-  overflow: hidden;
-  max-height: 0;
-  transition: max-height 0.3s ease;
-}
-.collapsible.open { max-height: 500px; }
+/* ── ML Credentials ── */
+.cred-row { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:12px; }
 
-.cal-body { padding-top: 16px; }
-.cal-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 12px;
-  margin-bottom: 14px;
+/* ── ML Status bar ── */
+.ml-status {
+  display:flex; align-items:center; gap:10px; margin-bottom:14px;
+  padding:10px 14px; border-radius:8px; background:var(--surf2);
 }
-.cal-grid .full { grid-column: 1 / -1; }
+.ml-status .nick { font-weight:700; font-size:.9rem; }
+.ml-status .lbl { font-size:.72rem; color:var(--text2); }
+.ml-status .spacer { flex:1; }
 
-.hint {
-  font-size: 0.69rem;
-  color: var(--text2);
-  margin-top: 4px;
-  line-height: 1.4;
+/* ── Orders ── */
+.orders-toolbar {
+  display:flex; gap:8px; align-items:center; margin-bottom:14px; flex-wrap:wrap;
 }
+.orders-toolbar .count { font-size:.78rem; color:var(--text2); margin-right:auto; }
+.orders-list { display:flex; flex-direction:column; gap:10px; }
 
-.cal-actions {
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
+.order-card {
+  background:var(--surf2); border:1px solid var(--border); border-radius:9px; padding:14px 16px;
+  transition:border-color .2s;
 }
+.order-card:hover { border-color:rgba(245,166,35,.3); }
+.order-head { display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:8px; }
+.order-id { font-size:.72rem; color:var(--text2); font-family:monospace; }
+.order-time { font-size:.7rem; color:var(--text2); }
+.order-buyer { font-size:.92rem; font-weight:700; margin-bottom:4px; }
+.order-dest { font-size:.78rem; color:var(--text2); margin-bottom:8px; display:flex; align-items:center; gap:5px; }
+.order-items { font-size:.8rem; color:var(--text); margin-bottom:10px; }
+.order-item-row { display:flex; gap:6px; padding:3px 0; border-top:1px solid rgba(255,255,255,.04); }
+.order-item-row:first-child { border-top:none; }
+.order-qty { color:var(--accent); font-weight:600; flex-shrink:0; }
+.order-footer { display:flex; justify-content:flex-end; gap:8px; }
+.order-card.printing { border-color:rgba(245,166,35,.6); }
+.order-card.printed  { border-color:rgba(76,175,136,.5); }
+.order-card.error    { border-color:rgba(224,85,85,.4); }
 
-/* ── Divider ──────────────────── */
-.divider {
-  border: none;
-  border-top: 1px solid var(--border);
-  margin: 14px 0;
-}
+.empty-state { text-align:center; padding:48px 20px; color:var(--text2); }
+.empty-icon { font-size:2.5rem; margin-bottom:12px; }
+.empty-title { font-size:.95rem; font-weight:600; margin-bottom:6px; color:var(--text); }
+.empty-sub { font-size:.8rem; line-height:1.5; }
 
-/* ── Footer ───────────────────── */
-footer {
-  text-align: center;
-  font-size: 0.72rem;
-  color: var(--text2);
-  margin-top: 20px;
-  opacity: 0.5;
-}
+.spinner { display:inline-block; width:16px; height:16px; border:2px solid rgba(255,255,255,.15); border-top-color:var(--accent); border-radius:50%; animation:spin .7s linear infinite; vertical-align:middle; margin-right:6px; }
+@keyframes spin { to { transform:rotate(360deg); } }
+
+.badge { display:inline-block; padding:2px 8px; border-radius:20px; font-size:.68rem; font-weight:700; }
+.badge-ok   { background:rgba(76,175,136,.15);  color:var(--ok);  }
+.badge-warn { background:rgba(245,166,35,.15);  color:var(--warn); }
+
+footer { text-align:center; font-size:.7rem; color:var(--text2); margin-top:20px; opacity:.4; }
 </style>
 </head>
 <body>
 
 <header>
-  <div class="printer-icon">
-    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <div class="ico-wrap">
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
       <rect x="4" y="9" width="16" height="11" rx="2" stroke="#f5a623" stroke-width="1.8"/>
       <path d="M8 9V6a2 2 0 012-2h4a2 2 0 012 2v3" stroke="#f5a623" stroke-width="1.8"/>
       <path d="M8 17h8M8 14h4" stroke="#f5a623" stroke-width="1.5" stroke-linecap="round"/>
@@ -305,282 +214,453 @@ footer {
   </div>
   <div>
     <h1>TSC Label Printer</h1>
-    <div class="sub">Impresión directa vía ZPL / Puerto 9100</div>
+    <div class="sub">Impresión ZPL directa · MercadoLibre Argentina</div>
   </div>
 </header>
 
-<!-- ── Printer Config ── -->
+<!-- Impresora config (siempre visible) -->
 <div class="card">
-  <div class="config-row">
-    <div class="f-grow">
-      <label>IP de la impresora</label>
-      <input type="text" id="printerIp" placeholder="192.168.1.100">
-    </div>
-    <div class="f-port">
-      <label>Puerto</label>
-      <input type="number" id="printerPort" value="9100" min="1" max="65535">
-    </div>
-    <div class="f-btn">
-      <label>&nbsp;</label>
-      <button class="btn-secondary" onclick="saveConfig()" style="height:37px">
-        Guardar
-        <span class="saved-pill" id="savedPill">✓ Guardado</span>
-      </button>
+  <div class="row">
+    <div class="f1"><label>IP de la impresora</label><input type="text" id="printerIp" placeholder="192.168.1.100"></div>
+    <div class="fp"><label>Puerto</label><input type="number" id="printerPort" value="9100"></div>
+    <div><label>&nbsp;</label>
+      <button class="btn-s btn-sm" onclick="saveConfig()">Guardar<span class="saved-pill" id="savedPill">✓</span></button>
     </div>
   </div>
 </div>
 
-<!-- ── Drop Zone ── -->
-<div class="card" style="padding: 14px;">
-  <div class="drop-zone" id="dropZone">
-    <input type="file" id="fileInput" accept=".txt,.zpl,.prn" onchange="handleFile(this.files[0])">
-    <span class="drop-icon" id="dropIcon">📄</span>
-    <div class="drop-title" id="dropTitle">Arrastrá el archivo ZPL de MercadoLibre</div>
-    <div class="drop-sub">o hacé click para seleccionar &nbsp;·&nbsp; .txt &nbsp;·&nbsp; .zpl &nbsp;·&nbsp; .prn</div>
-  </div>
-
-  <div class="status-bar idle" id="statusBar">
-    <div class="s-dot"></div>
-    <span id="statusText">Listo para imprimir</span>
-  </div>
-
-  <div class="last-file" id="lastFile">
-    Último: <strong id="lastFileName"></strong>
-  </div>
+<!-- Tabs -->
+<div class="tabs">
+  <button class="tab-btn active" data-tab="print" onclick="switchTab('print')">🖨️ Imprimir archivo</button>
+  <button class="tab-btn" data-tab="orders" onclick="switchTab('orders')">📦 Pedidos ML</button>
 </div>
 
-<!-- ── Calibración ── -->
-<div class="card">
-  <button class="section-toggle" id="calToggle" onclick="toggleSection('calPanel','calToggle','calArrow')">
-    <span>Calibración de etiqueta</span>
-    <span class="toggle-arrow" id="calArrow">▾</span>
-  </button>
+<!-- ══════════════ TAB: IMPRIMIR ══════════════ -->
+<div id="tab-print" class="tab-content active">
 
-  <div class="collapsible" id="calPanel">
-    <div class="cal-body">
-      <div class="cal-grid">
-        <div>
-          <label>Tipo de media</label>
-          <select id="mediaType">
-            <option value="gap">Gap (espacio entre etiquetas)</option>
-            <option value="mark">Marca negra</option>
-            <option value="continuous">Continuo</option>
-          </select>
-        </div>
-        <div>
-          <label>Resolución</label>
-          <select id="dpi">
-            <option value="203">203 dpi (estándar)</option>
-            <option value="300">300 dpi (alta res)</option>
-          </select>
-        </div>
-        <div>
-          <label>Alto de etiqueta (mm)</label>
-          <input type="number" id="labelHeight" value="150" min="10" max="400" step="1">
-          <div class="hint">Medí la etiqueta física sin incluir el gap entre ellas</div>
-        </div>
-        <div>
-          <label>Backfeed offset (dots)</label>
-          <input type="number" id="backfeedDots" value="0" min="-120" max="120" step="1">
-          <div class="hint">Ajuste fino posición vertical del contenido. 0 = sin ajuste</div>
-        </div>
-        <div>
-          <label>Ancho de etiqueta (mm)</label>
-          <input type="number" id="labelWidth" value="100" min="10" max="250" step="1">
-        </div>
-      </div>
+  <div class="card" style="padding:14px">
+    <div class="drop-zone" id="dropZone">
+      <input type="file" id="fileInput" accept=".txt,.zpl,.prn" onchange="handleFile(this.files[0])">
+      <span class="drop-icon" id="dropIcon">📄</span>
+      <div class="drop-title">Arrastrá el archivo ZPL de MercadoLibre</div>
+      <div class="drop-sub">o hacé click · .txt · .zpl · .prn</div>
+    </div>
+    <div class="status-bar idle" id="printStatus">
+      <div class="s-dot"></div><span id="printStatusText">Listo para imprimir</span>
+    </div>
+  </div>
 
-      <div class="cal-actions">
-        <button class="btn-primary" onclick="applyCalibration()">
-          Aplicar calibración
-        </button>
-        <button class="btn-secondary" onclick="testPrint()">
-          Imprimir test
-        </button>
-        <button class="btn-danger" onclick="runAutoCal()">
-          Auto-calibrar (~JA) ⚠️
-        </button>
-      </div>
-
-      <div class="hint" style="margin-top:12px; padding:10px 12px; background:rgba(224,85,85,0.07); border-radius:6px; border-left:2px solid rgba(224,85,85,0.4)">
-        ⚠️ <strong>Auto-calibrar</strong> hace avanzar varias etiquetas para detectar el gap automáticamente.
-        Usarlo solo al configurar por primera vez o si la alineación está muy desviada.
+  <!-- Calibración -->
+  <div class="card">
+    <button class="col-toggle" onclick="toggleCol('calBody','calArrow')">
+      <span>Calibración de etiqueta</span><span class="col-arrow" id="calArrow">▾</span>
+    </button>
+    <div class="collapsible" id="calBody">
+      <div class="col-body">
+        <div class="cal-grid">
+          <div>
+            <label>Tipo de media</label>
+            <select id="mediaType">
+              <option value="gap">Gap (etiquetas ML)</option>
+              <option value="mark">Marca negra</option>
+              <option value="continuous">Continuo</option>
+            </select>
+          </div>
+          <div>
+            <label>Resolución</label>
+            <select id="dpi"><option value="203">203 dpi</option><option value="300">300 dpi</option></select>
+          </div>
+          <div>
+            <label>Alto etiqueta (mm)</label>
+            <input type="number" id="labelHeight" value="150" min="10" max="400">
+            <div class="hint">ML Argentina: 150mm estándar</div>
+          </div>
+          <div>
+            <label>Backfeed offset (dots)</label>
+            <input type="number" id="backfeedDots" value="0" min="-120" max="120">
+            <div class="hint">Ajuste fino posición vertical</div>
+          </div>
+          <div><label>Ancho (mm)</label><input type="number" id="labelWidth" value="100" min="10" max="250"></div>
+        </div>
+        <div class="cal-actions">
+          <button class="btn-p btn-sm" onclick="applyCalibration()">Aplicar calibración</button>
+          <button class="btn-s btn-sm" onclick="testPrint()">Imprimir test</button>
+          <button class="btn-d btn-sm" onclick="runAutoCal()">Auto-calibrar (~JA) ⚠️</button>
+        </div>
+        <div class="hint" style="margin-top:10px;padding:9px 11px;background:rgba(224,85,85,.07);border-radius:6px;border-left:2px solid rgba(224,85,85,.3)">
+          ⚠️ Auto-calibrar avanza varias etiquetas para detectar el gap. Usar solo si la alineación está muy desviada.
+        </div>
+        <div class="status-bar idle" id="calStatus" style="margin-top:12px">
+          <div class="s-dot"></div><span id="calStatusText">—</span>
+        </div>
       </div>
     </div>
   </div>
-</div>
+
+</div><!-- /tab-print -->
+
+
+<!-- ══════════════ TAB: PEDIDOS ML ══════════════ -->
+<div id="tab-orders" class="tab-content">
+
+  <!-- Credenciales ML (colapsable) -->
+  <div class="card">
+    <button class="col-toggle" onclick="toggleCol('credBody','credArrow')">
+      <span>Credenciales de la app ML</span><span class="col-arrow" id="credArrow">▾</span>
+    </button>
+    <div class="collapsible" id="credBody">
+      <div class="col-body">
+        <div class="cred-row">
+          <div><label>App ID (client_id)</label><input type="text" id="mlClientId" placeholder="123456789"></div>
+          <div><label>Secret key</label><input type="password" id="mlClientSecret" placeholder="••••••••••••••••"></div>
+        </div>
+        <button class="btn-s btn-sm" onclick="saveCredentials()">
+          Guardar credenciales<span class="saved-pill" id="credPill">✓</span>
+        </button>
+        <div class="hint" style="margin-top:10px">
+          Crear la app en <strong>developers.mercadolibre.com.ar</strong> · Redirect URI: <code style="background:var(--surf3);padding:1px 5px;border-radius:3px;font-size:.78rem">http://localhost:5050/auth/callback</code>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Estado de login / contenido de orders -->
+  <div id="ordersArea">
+    <!-- Se renderiza por JS -->
+  </div>
+
+</div><!-- /tab-orders -->
+
 
 <footer>TSC Label Printer · ZPL over TCP 9100 · local</footer>
 
 <script>
 const API = 'http://localhost:5050';
+let mlUser = null;
+let ordersData = [];
 
 // ── Init ──────────────────────────────────────────────
 async function init() {
   try {
     const r = await fetch(API + '/config');
-    const cfg = await r.json();
-    document.getElementById('printerIp').value     = cfg.ip             ?? '192.168.1.100';
-    document.getElementById('printerPort').value   = cfg.port           ?? 9100;
-    document.getElementById('mediaType').value     = cfg.media_type     ?? 'gap';
-    document.getElementById('dpi').value           = cfg.dpi            ?? 203;
-    document.getElementById('labelHeight').value   = cfg.label_height_mm ?? 150;
-    document.getElementById('labelWidth').value    = cfg.label_width_mm  ?? 100;
-    document.getElementById('backfeedDots').value  = cfg.backfeed_dots  ?? 0;
+    const c = await r.json();
+    document.getElementById('printerIp').value    = c.ip            ?? '192.168.1.100';
+    document.getElementById('printerPort').value  = c.port          ?? 9100;
+    document.getElementById('mediaType').value    = c.media_type    ?? 'gap';
+    document.getElementById('dpi').value          = c.dpi           ?? 203;
+    document.getElementById('labelHeight').value  = c.label_height_mm ?? 150;
+    document.getElementById('labelWidth').value   = c.label_width_mm  ?? 100;
+    document.getElementById('backfeedDots').value = c.backfeed_dots ?? 0;
+    document.getElementById('mlClientId').value     = c.ml_client_id     ?? '';
+    document.getElementById('mlClientSecret').value = c.ml_client_secret ?? '';
   } catch(e) {
-    setStatus('error', 'No se pudo conectar con el servidor local — ¿está corriendo app.py?');
+    console.warn('config load error', e);
   }
+
+  // Leer tab de URL params (post-OAuth redirect)
+  const params = new URLSearchParams(location.search);
+  if (params.get('tab') === 'orders') {
+    switchTab('orders');
+    history.replaceState({}, '', '/');
+  }
+
+  await checkAuthStatus();
+}
+
+// ── Tabs ──────────────────────────────────────────────
+function switchTab(tab) {
+  document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
+  document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
+  document.getElementById('tab-' + tab).classList.add('active');
+  document.querySelector(`[data-tab="${tab}"]`).classList.add('active');
+  if (tab === 'orders') loadOrdersIfReady();
+}
+
+// ── Collapsibles ──────────────────────────────────────
+function toggleCol(bodyId, arrowId) {
+  document.getElementById(bodyId).classList.toggle('open');
+  document.getElementById(arrowId).classList.toggle('open');
 }
 
 // ── Config ────────────────────────────────────────────
 async function saveConfig() {
-  const cfg = {
-    ip:   document.getElementById('printerIp').value.trim(),
-    port: parseInt(document.getElementById('printerPort').value) || 9100,
-  };
-  try {
-    await fetch(API + '/config', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify(cfg)
-    });
-    const pill = document.getElementById('savedPill');
-    pill.classList.add('show');
-    setTimeout(() => pill.classList.remove('show'), 2000);
-  } catch(e) {
-    alert('Error al guardar configuración: ' + e.message);
-  }
+  await fetch(API + '/config', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({
+      ip:   document.getElementById('printerIp').value.trim(),
+      port: parseInt(document.getElementById('printerPort').value) || 9100,
+    })
+  });
+  flashPill('savedPill');
 }
 
-// ── Drag & Drop ───────────────────────────────────────
-const dropZone = document.getElementById('dropZone');
+async function saveCredentials() {
+  await fetch(API + '/config', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({
+      ml_client_id:     document.getElementById('mlClientId').value.trim(),
+      ml_client_secret: document.getElementById('mlClientSecret').value.trim(),
+    })
+  });
+  flashPill('credPill');
+}
 
-dropZone.addEventListener('dragover', e => {
-  e.preventDefault();
-  dropZone.classList.add('drag-over');
-});
-dropZone.addEventListener('dragleave', e => {
-  if (!dropZone.contains(e.relatedTarget))
-    dropZone.classList.remove('drag-over');
-});
-dropZone.addEventListener('drop', e => {
-  e.preventDefault();
-  dropZone.classList.remove('drag-over');
-  const file = e.dataTransfer.files[0];
-  if (file) handleFile(file);
-});
+function flashPill(id) {
+  const p = document.getElementById(id);
+  p.classList.add('show');
+  setTimeout(() => p.classList.remove('show'), 2000);
+}
+
+// ── Drop & Print (archivo) ────────────────────────────
+const dropZone = document.getElementById('dropZone');
+dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('drag-over'); });
+dropZone.addEventListener('dragleave', e => { if (!dropZone.contains(e.relatedTarget)) dropZone.classList.remove('drag-over'); });
+dropZone.addEventListener('drop', e => { e.preventDefault(); dropZone.classList.remove('drag-over'); const f = e.dataTransfer.files[0]; if (f) handleFile(f); });
 
 function handleFile(file) {
   if (!file) return;
-  dropZone.classList.add('printing');
-  setStatus('loading', `Enviando "${file.name}" a la impresora…`);
-
+  setPrintStatus('loading', `Enviando "${file.name}"…`);
   const reader = new FileReader();
   reader.onload = async (e) => {
     try {
-      const resp = await fetch(API + '/print', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/octet-stream'},
-        body: e.target.result
-      });
-      const data = await resp.json();
-      dropZone.classList.remove('printing');
-      if (data.ok) {
-        setStatus('success', `Impreso correctamente: "${file.name}"`);
-        showLastFile(file.name);
-        pulseIcon('✅');
-      } else {
-        setStatus('error', data.error);
-        pulseIcon('❌');
-      }
-    } catch(err) {
-      dropZone.classList.remove('printing');
-      setStatus('error', 'Error de red: ' + err.message);
-      pulseIcon('❌');
-    }
+      const resp = await fetch(API + '/print', { method:'POST', headers:{'Content-Type':'application/octet-stream'}, body: e.target.result });
+      const d = await resp.json();
+      if (d.ok) { setPrintStatus('ok', `✓ Impreso: "${file.name}"`); document.getElementById('dropIcon').textContent = '✅'; setTimeout(() => document.getElementById('dropIcon').textContent = '📄', 2500); }
+      else setPrintStatus('err', '✗ ' + d.error);
+    } catch(err) { setPrintStatus('err', err.message); }
   };
   reader.readAsArrayBuffer(file);
 }
 
-// ── Status ────────────────────────────────────────────
-function setStatus(type, msg) {
-  const bar = document.getElementById('statusBar');
-  bar.className = 'status-bar ' + type;
-  document.getElementById('statusText').textContent = msg;
+function setPrintStatus(type, msg) {
+  const b = document.getElementById('printStatus');
+  b.className = 'status-bar ' + type;
+  document.getElementById('printStatusText').textContent = msg;
 }
 
-function showLastFile(name) {
-  const div = document.getElementById('lastFile');
-  document.getElementById('lastFileName').textContent = name;
-  div.style.display = 'block';
-}
-
-function pulseIcon(icon) {
-  const el = document.getElementById('dropIcon');
-  el.textContent = icon;
-  setTimeout(() => { el.textContent = '📄'; }, 2500);
-}
-
-// ── Calibration ───────────────────────────────────────
-function toggleSection(panelId, toggleId, arrowId) {
-  document.getElementById(panelId).classList.toggle('open');
-  document.getElementById(arrowId).classList.toggle('open');
-}
-
+// ── Calibración ───────────────────────────────────────
 async function applyCalibration() {
   const cfg = {
-    media_type:      document.getElementById('mediaType').value,
-    dpi:             parseInt(document.getElementById('dpi').value),
+    media_type: document.getElementById('mediaType').value,
+    dpi: parseInt(document.getElementById('dpi').value),
     label_height_mm: parseFloat(document.getElementById('labelHeight').value),
     label_width_mm:  parseFloat(document.getElementById('labelWidth').value),
-    backfeed_dots:   parseInt(document.getElementById('backfeedDots').value),
+    backfeed_dots: parseInt(document.getElementById('backfeedDots').value),
   };
-  setStatus('loading', 'Enviando calibración a la impresora…');
+  setCalStatus('loading', 'Enviando calibración…');
   try {
-    const resp = await fetch(API + '/calibrate', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify(cfg)
-    });
-    const data = await resp.json();
-    if (data.ok) {
-      const h = data.dots?.height ?? '?';
-      const b = data.dots?.backfeed ?? '?';
-      setStatus('success', `Calibración aplicada — ${h} dots alto · backfeed ${b} dots`);
-    } else {
-      setStatus('error', data.error);
-    }
-  } catch(e) {
-    setStatus('error', e.message);
-  }
+    const r = await fetch(API + '/calibrate', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(cfg) });
+    const d = await r.json();
+    if (d.ok) setCalStatus('ok', `✓ Aplicada — ${d.dots.height} dots alto, backfeed ${d.dots.backfeed} dots`);
+    else setCalStatus('err', '✗ ' + d.error);
+  } catch(e) { setCalStatus('err', e.message); }
 }
 
 async function testPrint() {
-  setStatus('loading', 'Imprimiendo etiqueta de prueba…');
+  setCalStatus('loading', 'Imprimiendo test…');
   try {
-    const resp = await fetch(API + '/testprint', { method: 'POST' });
-    const data = await resp.json();
-    if (data.ok) setStatus('success', 'Etiqueta de prueba enviada');
-    else         setStatus('error', data.error);
-  } catch(e) {
-    setStatus('error', e.message);
-  }
+    const r = await fetch(API + '/testprint', { method:'POST' });
+    const d = await r.json();
+    d.ok ? setCalStatus('ok', '✓ Test enviado') : setCalStatus('err', '✗ ' + d.error);
+  } catch(e) { setCalStatus('err', e.message); }
 }
 
 async function runAutoCal() {
-  if (!confirm(
-    'Auto-calibrar (~JA) hará avanzar varias etiquetas para detectar el gap.\n\n' +
-    'Asegurate de que la impresora tenga etiquetas cargadas.\n\n¿Continuar?'
-  )) return;
-  setStatus('loading', 'Ejecutando auto-calibración (~JA)…');
+  if (!confirm('Esto avanzará varias etiquetas para detectar el gap.\n¿Continuar?')) return;
+  setCalStatus('loading', 'Ejecutando ~JA…');
   try {
-    const resp = await fetch(API + '/autocal', { method: 'POST' });
-    const data = await resp.json();
-    if (data.ok) setStatus('success', 'Auto-calibración enviada — la impresora está avanzando etiquetas');
-    else         setStatus('error', data.error);
+    const r = await fetch(API + '/autocal', { method:'POST' });
+    const d = await r.json();
+    d.ok ? setCalStatus('ok', '✓ Auto-calibración enviada') : setCalStatus('err', '✗ ' + d.error);
+  } catch(e) { setCalStatus('err', e.message); }
+}
+
+function setCalStatus(type, msg) {
+  const b = document.getElementById('calStatus');
+  b.className = 'status-bar ' + type;
+  document.getElementById('calStatusText').textContent = msg;
+}
+
+// ── ML Auth ───────────────────────────────────────────
+async function checkAuthStatus() {
+  try {
+    const r = await fetch(API + '/auth/status');
+    const d = await r.json();
+    mlUser = d.logged_in ? d : null;
+    renderOrdersArea();
   } catch(e) {
-    setStatus('error', e.message);
+    mlUser = null;
+    renderOrdersArea();
   }
+}
+
+async function mlLogout() {
+  await fetch(API + '/auth/logout', { method:'POST' });
+  mlUser = null;
+  ordersData = [];
+  renderOrdersArea();
+}
+
+function loginWithML() {
+  window.location.href = API + '/auth/login';
+}
+
+// ── Orders ────────────────────────────────────────────
+async function loadOrdersIfReady() {
+  if (!mlUser) return;
+  renderOrdersArea(true); // mostrar loading
+  try {
+    const r = await fetch(API + '/ml/orders');
+    if (r.status === 401) { mlUser = null; renderOrdersArea(); return; }
+    const d = await r.json();
+    if (d.ok) { ordersData = d.orders; renderOrdersArea(); }
+    else renderOrdersArea(false, d.error);
+  } catch(e) {
+    renderOrdersArea(false, e.message);
+  }
+}
+
+async function printOrder(shipmentId, cardEl) {
+  cardEl.classList.add('printing');
+  try {
+    const r = await fetch(`${API}/ml/print/${shipmentId}`, { method:'POST' });
+    const d = await r.json();
+    cardEl.classList.remove('printing');
+    if (d.ok) {
+      cardEl.classList.add('printed');
+      const btn = cardEl.querySelector('.print-btn');
+      if (btn) { btn.textContent = '✓ Impreso'; btn.disabled = true; }
+    } else {
+      cardEl.classList.add('error');
+      alert('Error al imprimir: ' + d.error);
+    }
+  } catch(e) {
+    cardEl.classList.remove('printing');
+    cardEl.classList.add('error');
+    alert(e.message);
+  }
+}
+
+async function printAll() {
+  const ids = ordersData.map(o => o.shipping?.id).filter(Boolean);
+  if (!ids.length) return;
+  if (!confirm(`Imprimir ${ids.length} etiqueta(s) de una vez?\n\nEsto enviará todas a la impresora en un solo trabajo.`)) return;
+
+  try {
+    const r = await fetch(API + '/ml/print-all', {
+      method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ shipment_ids: ids })
+    });
+    const d = await r.json();
+    if (d.ok) alert(`✓ ${d.printed} etiqueta(s) enviadas a la impresora`);
+    else alert('Error: ' + d.error);
+  } catch(e) { alert(e.message); }
+}
+
+// ── Render ────────────────────────────────────────────
+function renderOrdersArea(loading = false, errorMsg = null) {
+  const area = document.getElementById('ordersArea');
+
+  if (!mlUser) {
+    area.innerHTML = `
+      <div class="card ml-login-card">
+        <div class="ml-logo">🛒</div>
+        <div class="ml-login-title">Conectar con MercadoLibre</div>
+        <div class="ml-login-sub">
+          Ingresá con tu cuenta vendedor para ver los pedidos<br>con estado <strong>Listo para despachar</strong> e imprimir<br>las etiquetas directo a la impresora TSC.
+        </div>
+        <button class="btn-ml" onclick="loginWithML()">Conectar con MercadoLibre</button>
+      </div>`;
+    return;
+  }
+
+  const nick = mlUser.nickname ?? `Usuario #${mlUser.user_id}`;
+
+  let content = `
+    <div class="ml-status">
+      <div>
+        <div class="nick">👤 ${nick}</div>
+        <div class="lbl">Conectado a MercadoLibre</div>
+      </div>
+      <div class="spacer"></div>
+      <button class="btn-d btn-sm" onclick="mlLogout()">Desconectar</button>
+    </div>`;
+
+  if (loading) {
+    content += `<div class="card empty-state"><div><span class="spinner"></span> Cargando pedidos…</div></div>`;
+    area.innerHTML = content;
+    return;
+  }
+
+  if (errorMsg) {
+    content += `<div class="card empty-state"><div class="empty-icon">⚠️</div><div class="empty-title">Error al cargar pedidos</div><div class="empty-sub">${errorMsg}</div></div>`;
+    area.innerHTML = content;
+    return;
+  }
+
+  if (!ordersData.length) {
+    content += `
+      <div class="orders-toolbar">
+        <span class="count">Sin pedidos pendientes</span>
+        <button class="btn-s btn-sm" onclick="loadOrdersIfReady()">↻ Actualizar</button>
+      </div>
+      <div class="card empty-state">
+        <div class="empty-icon">📭</div>
+        <div class="empty-title">No hay pedidos listos para despachar</div>
+        <div class="empty-sub">Cuando haya pedidos con pago confirmado aparecerán acá</div>
+      </div>`;
+    area.innerHTML = content;
+    return;
+  }
+
+  const shipmentIds = ordersData.map(o => o.shipping?.id).filter(Boolean);
+
+  content += `
+    <div class="orders-toolbar">
+      <span class="count">${ordersData.length} pedido(s) listo(s) para despachar</span>
+      <button class="btn-s btn-sm" onclick="loadOrdersIfReady()">↻ Actualizar</button>
+      ${shipmentIds.length ? `<button class="btn-p btn-sm" onclick="printAll()">🖨️ Imprimir todos (${shipmentIds.length})</button>` : ''}
+    </div>
+    <div class="orders-list" id="ordersList">`;
+
+  for (const order of ordersData) {
+    const buyer     = order.buyer?.nickname ?? order.buyer?.first_name ?? '—';
+    const items     = order.order_items ?? [];
+    const shipId    = order.shipping?.id;
+    const dateStr   = order.date_closed ? timeAgo(order.date_closed) : '';
+
+    const itemsHtml = items.map(i =>
+      `<div class="order-item-row"><span class="order-qty">×${i.quantity}</span><span>${i.item?.title ?? '—'}</span></div>`
+    ).join('');
+
+    content += `
+      <div class="order-card" id="order-${order.id}">
+        <div class="order-head">
+          <span class="order-id">#${order.id}</span>
+          <span class="order-time">${dateStr}</span>
+        </div>
+        <div class="order-buyer">${buyer}</div>
+        <div class="order-items">${itemsHtml}</div>
+        <div class="order-footer">
+          ${shipId
+            ? `<button class="btn-p btn-sm print-btn" onclick="printOrder(${shipId}, document.getElementById('order-${order.id}'))">🖨️ Imprimir etiqueta</button>`
+            : `<span class="badge badge-warn">Sin ID de envío</span>`
+          }
+        </div>
+      </div>`;
+  }
+
+  content += `</div>`;
+  area.innerHTML = content;
+}
+
+function timeAgo(dateStr) {
+  const diff = (Date.now() - new Date(dateStr).getTime()) / 1000;
+  if (diff < 60)   return 'hace un momento';
+  if (diff < 3600) return `hace ${Math.round(diff/60)} min`;
+  if (diff < 86400)return `hace ${Math.round(diff/3600)} h`;
+  return `hace ${Math.round(diff/86400)} d`;
 }
 
 init();

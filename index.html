@@ -643,6 +643,10 @@ function renderOrdersArea(loading = false, errorMsg = null) {
         <div class="order-buyer">${buyer}</div>
         <div class="order-items">${itemsHtml}</div>
         <div class="order-footer">
+          ${order._status_label === 'paid'
+            ? `<span class="badge badge-warn" style="margin-right:auto">⏳ Pago confirmado</span>`
+            : `<span class="badge badge-ok" style="margin-right:auto">✓ Listo para despachar</span>`
+          }
           ${shipId
             ? `<button class="btn-p btn-sm print-btn" onclick="printOrder(${shipId}, document.getElementById('order-${order.id}'))">🖨️ Imprimir etiqueta</button>`
             : `<span class="badge badge-warn">Sin ID de envío</span>`

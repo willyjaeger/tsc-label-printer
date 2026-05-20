@@ -331,16 +331,23 @@ def ml_orders():
             return jsonify({'ok': False, 'error': str(e)}), 500
 
     try:
-        r = ml_get('/orders/search', token, params={
-            'seller':       user_id,
-            'order.status': 'ready_to_ship',
-            'sort':         'date_desc',
-            'limit':        50,
-        })
-        data   = r.json()
-        orders = data.get('results', [])
-        total  = data.get('paging', {}).get('total', 0)
-        return jsonify({'ok': True, 'orders': orders, 'total': total})
+        # Buscar en ambos estados: ready_to_ship (etiqueta disponible) y paid (pago confirmado)
+        all_orders = []
+        seen_ids   = set()
+        for status in ('ready_to_ship', 'paid'):
+            r = ml_get('/orders/search', token, params={
+                'seller':       user_id,
+                'order.status': status,
+                'sort':         'date_desc',
+                'limit':        50,
+            })
+            for o in r.json().get('results', []):
+                if o['id'] not in seen_ids:
+                    o['_status_label'] = status  # para mostrar en la UI
+                    all_orders.append(o)
+                    seen_ids.add(o['id'])
+
+        return jsonify({'ok': True, 'orders': all_orders, 'total': len(all_orders)})
     except Exception as e:
         return jsonify({'ok': False, 'error': str(e)}), 500
 

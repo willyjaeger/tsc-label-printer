@@ -9,6 +9,7 @@ import time
 import secrets
 import hashlib
 import base64
+from concurrent.futures import ThreadPoolExecutor
 
 try:
     import requests as http
@@ -311,6 +312,29 @@ def auth_logout():
     return jsonify({'ok': True})
 
 
+def _fetch_shipment(shipment_id, token):
+    """Trae logistic_type + dirección del destinatario para un envío."""
+    try:
+        r = http.get(
+            f'{ML_API}/shipments/{shipment_id}',
+            headers={'Authorization': f'Bearer {token}'},
+            timeout=8,
+        )
+        d = r.json()
+        addr = d.get('receiver_address', {})
+        return shipment_id, {
+            'logistic_type':    d.get('logistic_type', ''),
+            'receiver_name':    addr.get('receiver_name', ''),
+            'street':           f"{addr.get('street_name','')} {addr.get('street_number','')}".strip(),
+            'city':             addr.get('city', {}).get('name', ''),
+            'state':            addr.get('state', {}).get('name', ''),
+            'zip_code':         addr.get('zip_code', ''),
+            'comment':          addr.get('comment', ''),
+        }
+    except Exception:
+        return shipment_id, {'logistic_type': ''}
+
+
 # ── ML Orders ──────────────────────────────────────────────────────────────────
 
 @app.route('/ml/orders')
@@ -331,7 +355,7 @@ def ml_orders():
             return jsonify({'ok': False, 'error': str(e)}), 500
 
     try:
-        # Buscar en ambos estados: ready_to_ship (etiqueta disponible) y paid (pago confirmado)
+        # 1. Traer órdenes en ambos estados
         all_orders = []
         seen_ids   = set()
         for status in ('ready_to_ship', 'paid'):
@@ -343,11 +367,32 @@ def ml_orders():
             })
             for o in r.json().get('results', []):
                 if o['id'] not in seen_ids:
-                    o['_status_label'] = status  # para mostrar en la UI
+                    o['_status_label'] = status
                     all_orders.append(o)
                     seen_ids.add(o['id'])
 
-        return jsonify({'ok': True, 'orders': all_orders, 'total': len(all_orders)})
+        # 2. Traer detalle de envíos en paralelo (logistic_type + dirección)
+        ship_ids = [(o.get('shipping', {}).get('id')) for o in all_orders]
+        ship_ids = [sid for sid in ship_ids if sid]
+
+        shipment_data = {}
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            futures = {pool.submit(_fetch_shipment, sid, token): sid for sid in ship_ids}
+            for fut in futures:
+                sid, data = fut.result()
+                shipment_data[sid] = data
+
+        # 3. Filtrar Full y enriquecer con datos de envío
+        printable = []
+        for o in all_orders:
+            sid  = o.get('shipping', {}).get('id')
+            info = shipment_data.get(sid, {})
+            if info.get('logistic_type') == 'fulfillment':
+                continue   # ML maneja estos, el vendedor no imprime
+            o['_shipment'] = info
+            printable.append(o)
+
+        return jsonify({'ok': True, 'orders': printable, 'total': len(printable)})
     except Exception as e:
         return jsonify({'ok': False, 'error': str(e)}), 500
 

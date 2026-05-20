@@ -625,10 +625,13 @@ function renderOrdersArea(loading = false, errorMsg = null) {
     <div class="orders-list" id="ordersList">`;
 
   for (const order of ordersData) {
-    const buyer     = order.buyer?.nickname ?? order.buyer?.first_name ?? '—';
+    const buyer     = order._shipment?.receiver_name || order.buyer?.nickname || '—';
     const items     = order.order_items ?? [];
     const shipId    = order.shipping?.id;
     const dateStr   = order.date_closed ? timeAgo(order.date_closed) : '';
+    const addr      = order._shipment
+        ? [order._shipment.street, order._shipment.city, order._shipment.state].filter(Boolean).join(', ')
+        : '';
 
     const itemsHtml = items.map(i =>
       `<div class="order-item-row"><span class="order-qty">×${i.quantity}</span><span>${i.item?.title ?? '—'}</span></div>`
@@ -641,6 +644,7 @@ function renderOrdersArea(loading = false, errorMsg = null) {
           <span class="order-time">${dateStr}</span>
         </div>
         <div class="order-buyer">${buyer}</div>
+        ${addr ? `<div class="order-dest">📍 ${addr}</div>` : ''}
         <div class="order-items">${itemsHtml}</div>
         <div class="order-footer">
           ${order._status_label === 'paid'

@@ -1,0 +1,15 @@
+# PyInstaller output
+dist/
+build/
+*.spec
+
+# Config con IP guardada (cada PC tiene la suya)
+config.json
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# VS Code
+.vscode/

@@ -79,6 +79,8 @@ button:active { transform:scale(.97); }
 .btn-s:hover  { background:var(--surf3); }
 .btn-d  { background:rgba(224,85,85,.1); color:var(--err); border:1px solid rgba(224,85,85,.2); }
 .btn-d:hover  { background:rgba(224,85,85,.2); }
+.btn-ok { background:var(--ok); color:#111; }
+.btn-ok:hover { background:#3a9e72; }
 .btn-sm { padding:6px 12px; font-size:.8rem; }
 
 /* ── Config row ── */
@@ -185,6 +187,19 @@ button:active { transform:scale(.97); }
 .order-card.printing { border-color:rgba(245,166,35,.6); }
 .order-card.printed  { border-color:rgba(76,175,136,.5); }
 .order-card.error    { border-color:rgba(224,85,85,.4); }
+.order-card.flex-type   { border-left:3px solid #ffe600; }
+.order-card.correo-type { border-left:3px solid #5b9cf6; }
+
+.badge-flex   { background:rgba(255,230,0,.15);   color:#ccb800; }
+.badge-correo { background:rgba(91,156,246,.15);  color:#5b9cf6; }
+
+.section-header {
+  font-size:.72rem; font-weight:700; text-transform:uppercase; letter-spacing:.08em;
+  color:var(--text2); padding:6px 2px; margin-top:6px; margin-bottom:8px;
+  border-bottom:1px solid var(--border);
+}
+.section-header.flex-section   { color:#ccb800; border-color:rgba(255,230,0,.3); }
+.section-header.correo-section { color:#5b9cf6; border-color:rgba(91,156,246,.3); }
 
 .empty-state { text-align:center; padding:48px 20px; color:var(--text2); }
 .empty-icon { font-size:2.5rem; margin-bottom:12px; }
@@ -195,10 +210,32 @@ button:active { transform:scale(.97); }
 @keyframes spin { to { transform:rotate(360deg); } }
 
 .badge { display:inline-block; padding:2px 8px; border-radius:20px; font-size:.68rem; font-weight:700; }
-.badge-ok   { background:rgba(76,175,136,.15);  color:var(--ok);  }
-.badge-warn { background:rgba(245,166,35,.15);  color:var(--warn); }
+.badge-ok      { background:rgba(76,175,136,.15);  color:var(--ok);  }
+.badge-warn    { background:rgba(245,166,35,.15);  color:var(--warn); }
+.badge-shipped { background:rgba(100,149,237,.15); color:#6495ed; }
 
 footer { text-align:center; font-size:.7rem; color:var(--text2); margin-top:20px; opacity:.4; }
+
+/* ── Auto-print bar ── */
+.autoprint-bar {
+  display:flex; align-items:center; gap:10px; padding:9px 14px;
+  background:var(--surf2); border:1px solid var(--border); border-radius:8px;
+  margin-bottom:10px; flex-wrap:wrap;
+}
+.ap-label { font-size:.78rem; font-weight:600; color:var(--text2); white-space:nowrap; }
+.ap-status { display:flex; align-items:center; gap:5px; font-size:.74rem; color:var(--text2); }
+.ap-dot { width:7px; height:7px; border-radius:50%; flex-shrink:0; }
+.ap-dot.on  { background:var(--ok);   animation:pulse 2s ease-in-out infinite; }
+.ap-dot.off { background:var(--text2); }
+.ap-dot.run { background:var(--warn); animation:blink .9s ease-in-out infinite; }
+.ap-dot.err { background:var(--err);  animation:blink .9s ease-in-out infinite; }
+@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.45} }
+.ap-spacer { flex:1; }
+.ap-select { width:auto !important; padding:5px 28px 5px 8px !important; font-size:.78rem !important; }
+.btn-ap-on  { background:rgba(76,175,136,.15);  color:var(--ok);  border:1px solid rgba(76,175,136,.3); }
+.btn-ap-on:hover  { background:rgba(76,175,136,.28); }
+.btn-ap-off { background:rgba(245,166,35,.1);   color:var(--warn); border:1px solid rgba(245,166,35,.25); }
+.btn-ap-off:hover { background:rgba(245,166,35,.2); }
 </style>
 </head>
 <body>
@@ -231,19 +268,19 @@ footer { text-align:center; font-size:.7rem; color:var(--text2); margin-top:20px
 
 <!-- Tabs -->
 <div class="tabs">
-  <button class="tab-btn active" data-tab="print" onclick="switchTab('print')">🖨️ Imprimir archivo</button>
-  <button class="tab-btn" data-tab="orders" onclick="switchTab('orders')">📦 Pedidos ML</button>
+  <button class="tab-btn" data-tab="print" onclick="switchTab('print')">🖨️ Imprimir archivo</button>
+  <button class="tab-btn active" data-tab="orders" onclick="switchTab('orders')">📦 Pedidos ML</button>
 </div>
 
 <!-- ══════════════ TAB: IMPRIMIR ══════════════ -->
-<div id="tab-print" class="tab-content active">
+<div id="tab-print" class="tab-content">
 
   <div class="card" style="padding:14px">
     <div class="drop-zone" id="dropZone">
-      <input type="file" id="fileInput" accept=".txt,.zpl,.prn" onchange="handleFile(this.files[0])">
+      <input type="file" id="fileInput" accept=".txt,.zpl,.prn,.zip" onchange="handleFile(this.files[0])">
       <span class="drop-icon" id="dropIcon">📄</span>
       <div class="drop-title">Arrastrá el archivo ZPL de MercadoLibre</div>
-      <div class="drop-sub">o hacé click · .txt · .zpl · .prn</div>
+      <div class="drop-sub">o hacé click · .zpl · .zip · .txt · .prn</div>
     </div>
     <div class="status-bar idle" id="printStatus">
       <div class="s-dot"></div><span id="printStatusText">Listo para imprimir</span>
@@ -301,7 +338,7 @@ footer { text-align:center; font-size:.7rem; color:var(--text2); margin-top:20px
 
 
 <!-- ══════════════ TAB: PEDIDOS ML ══════════════ -->
-<div id="tab-orders" class="tab-content">
+<div id="tab-orders" class="tab-content active">
 
   <!-- Credenciales ML (colapsable) -->
   <div class="card">
@@ -324,6 +361,9 @@ footer { text-align:center; font-size:.7rem; color:var(--text2); margin-top:20px
     </div>
   </div>
 
+  <!-- Barra de auto-impresión (visible solo cuando conectado) -->
+  <div id="autoprintBar" style="display:none"></div>
+
   <!-- Estado de login / contenido de orders -->
   <div id="ordersArea">
     <!-- Se renderiza por JS -->
@@ -338,6 +378,38 @@ footer { text-align:center; font-size:.7rem; color:var(--text2); margin-top:20px
 const API = 'http://localhost:5050';
 let mlUser = null;
 let ordersData = [];
+
+// ── Estado de impresión (persiste entre recargas) ──────
+const PRINTED_KEY  = 'tsc_printed';
+const CACHE_KEY    = 'tsc_orders_cache';
+const CACHE_TTL_MS = 48 * 60 * 60 * 1000; // 48 horas
+
+let printedSet = new Set(JSON.parse(localStorage.getItem(PRINTED_KEY) || '[]'));
+function markPrinted(id) {
+  printedSet.add(String(id));
+  localStorage.setItem(PRINTED_KEY, JSON.stringify([...printedSet]));
+}
+function isPrinted(id) { return printedSet.has(String(id)); }
+
+// Guarda pedidos vistos en caché local (para mostrarlos aunque ML ya no los devuelva)
+function cacheOrders(orders) {
+  const cache = JSON.parse(localStorage.getItem(CACHE_KEY) || '{}');
+  const now = Date.now();
+  orders.forEach(o => { cache[o.id] = { ...o, _cached_at: now }; });
+  // Limpiar entradas viejas (> 48 h)
+  Object.keys(cache).forEach(k => {
+    if (now - (cache[k]._cached_at || 0) > CACHE_TTL_MS) delete cache[k];
+  });
+  localStorage.setItem(CACHE_KEY, JSON.stringify(cache));
+}
+
+// Devuelve pedidos impresos que ML ya no incluye en la respuesta actual
+function getCachedPrinted(currentIds) {
+  const cache = JSON.parse(localStorage.getItem(CACHE_KEY) || '{}');
+  return Object.values(cache).filter(o =>
+    isPrinted(o.shipping?.id) && !currentIds.has(String(o.id))
+  );
+}
 
 // ── Init ──────────────────────────────────────────────
 async function init() {
@@ -357,14 +429,11 @@ async function init() {
     console.warn('config load error', e);
   }
 
-  // Leer tab de URL params (post-OAuth redirect)
   const params = new URLSearchParams(location.search);
-  if (params.get('tab') === 'orders') {
-    switchTab('orders');
-    history.replaceState({}, '', '/');
-  }
+  if (params.has('tab')) history.replaceState({}, '', '/');
 
   await checkAuthStatus();
+  loadOrdersIfReady();
 }
 
 // ── Tabs ──────────────────────────────────────────────
@@ -489,6 +558,7 @@ async function checkAuthStatus() {
     const r = await fetch(API + '/auth/status');
     const d = await r.json();
     mlUser = d.logged_in ? d : null;
+    if (mlUser) connectSSE();
     renderOrdersArea();
   } catch(e) {
     mlUser = null;
@@ -498,8 +568,17 @@ async function checkAuthStatus() {
 
 async function mlLogout() {
   await fetch(API + '/auth/logout', { method:'POST' });
+  // Apagar auto-impresión en el servidor antes de desconectar
+  if (apEnabled) {
+    try { await fetch(API + '/ml/autoprint', { method:'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ enabled: false }) }); } catch(e) {}
+  }
+  disconnectSSE();
+  apEnabled = false; apStatus = 'idle'; apCheckedAt = 0; apInitialized = false;
   mlUser = null;
   ordersData = [];
+  renderAutoprintBar();
   renderOrdersArea();
 }
 
@@ -515,26 +594,52 @@ async function loadOrdersIfReady() {
     const r = await fetch(API + '/ml/orders');
     if (r.status === 401) { mlUser = null; renderOrdersArea(); return; }
     const d = await r.json();
-    if (d.ok) { ordersData = d.orders; renderOrdersArea(); }
-    else renderOrdersArea(false, d.error);
+    if (d.ok) {
+      cacheOrders(d.orders);
+      const currentIds = new Set(d.orders.map(o => String(o.id)));
+      const cached = getCachedPrinted(currentIds);
+      ordersData = [...d.orders, ...cached];
+      renderOrdersArea();
+    } else renderOrdersArea(false, d.error);
   } catch(e) {
     renderOrdersArea(false, e.message);
   }
 }
 
-async function printOrder(shipmentId, cardEl) {
+async function printOrder(shipmentId, cardEl, reprint) {
+  if (reprint && !confirm('Esta etiqueta ya fue impresa.\n¿Reimprimir de todas formas?')) return;
+  cardEl.classList.remove('error');
   cardEl.classList.add('printing');
+
+  const order = ordersData.find(o => o.shipping?.id == shipmentId);
+  const detail = order ? {
+    order_id: order.id,
+    buyer:    order._shipment?.receiver_name || order.buyer?.nickname || '',
+    items:    (order.order_items || []).map(i => ({ qty: i.quantity, title: i.item?.title || '' })),
+  } : {};
+
   try {
-    const r = await fetch(`${API}/ml/print/${shipmentId}`, { method:'POST' });
+    const r = await fetch(`${API}/ml/print/${shipmentId}`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(detail),
+    });
     const d = await r.json();
     cardEl.classList.remove('printing');
     if (d.ok) {
+      markPrinted(shipmentId);
       cardEl.classList.add('printed');
+      cardEl.classList.remove('error');
       const btn = cardEl.querySelector('.print-btn');
-      if (btn) { btn.textContent = '✓ Impreso'; btn.disabled = true; }
+      if (btn) {
+        btn.classList.remove('btn-ok');
+        btn.classList.add('btn-p');
+        btn.textContent = '↺ Reimprimir';
+        btn.onclick = () => printOrder(shipmentId, cardEl, true);
+      }
     } else {
       cardEl.classList.add('error');
-      alert('Error al imprimir: ' + d.error);
+      alert('Error al imprimir:\n\n' + d.error);
     }
   } catch(e) {
     cardEl.classList.remove('printing');
@@ -544,23 +649,38 @@ async function printOrder(shipmentId, cardEl) {
 }
 
 async function printAll() {
-  const ids = ordersData.map(o => o.shipping?.id).filter(Boolean);
-  if (!ids.length) return;
-  if (!confirm(`Imprimir ${ids.length} etiqueta(s) de una vez?\n\nEsto enviará todas a la impresora en un solo trabajo.`)) return;
+  const orders = ordersData
+    .filter(o => o.shipping?.id && !isPrinted(o.shipping.id))
+    .map(o => ({
+      shipment_id: o.shipping.id,
+      order_id:    o.id,
+      buyer:       o._shipment?.receiver_name || o.buyer?.nickname || '',
+      items:       (o.order_items || []).map(i => ({ qty: i.quantity, title: i.item?.title || '' })),
+    }));
+  if (!orders.length) return;
+  if (!confirm(`Imprimir ${orders.length} etiqueta(s) con detalle?\n\nSalen en pares: etiqueta de envío + detalle de artículos.`)) return;
 
   try {
     const r = await fetch(API + '/ml/print-all', {
-      method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ shipment_ids: ids })
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ orders }),
     });
     const d = await r.json();
-    if (d.ok) alert(`✓ ${d.printed} etiqueta(s) enviadas a la impresora`);
-    else alert('Error: ' + d.error);
+    if (d.ok) {
+      orders.forEach(o => markPrinted(o.shipment_id));
+      renderOrdersArea();
+      const warn = d.failed?.length ? `\nFallaron: ${d.failed.join(', ')}` : '';
+      alert(`✓ ${d.printed} etiqueta(s) enviadas a la impresora${warn}`);
+    } else {
+      alert('Error: ' + d.error);
+    }
   } catch(e) { alert(e.message); }
 }
 
 // ── Render ────────────────────────────────────────────
 function renderOrdersArea(loading = false, errorMsg = null) {
   const area = document.getElementById('ordersArea');
+  renderAutoprintBar();
 
   if (!mlUser) {
     area.innerHTML = `
@@ -614,31 +734,42 @@ function renderOrdersArea(loading = false, errorMsg = null) {
     return;
   }
 
-  const shipmentIds = ordersData.map(o => o.shipping?.id).filter(Boolean);
+  const unprintedIds    = ordersData.map(o => o.shipping?.id).filter(id => id && !isPrinted(id));
+  const shippedOrders   = ordersData.filter(o => o._status_label === 'shipped');
+  const pendingOrders   = ordersData.filter(o => o._status_label !== 'shipped');
+  const isFlexType      = t => t === 'me2' || t === 'xd_drop_off';
+  const isCorrType      = t => t === 'cross_docking';
+
+  const flexOrders   = pendingOrders.filter(o => isFlexType(o._shipment?.logistic_type));
+  const correoOrders = pendingOrders.filter(o => isCorrType(o._shipment?.logistic_type));
 
   content += `
     <div class="orders-toolbar">
-      <span class="count">${ordersData.length} pedido(s) listo(s) para despachar</span>
+      <span class="count">${unprintedIds.length} pendiente(s)${shippedOrders.length ? ` · ${shippedOrders.length} despachado(s) hoy` : ''}</span>
       <button class="btn-s btn-sm" onclick="loadOrdersIfReady()">↻ Actualizar</button>
-      ${shipmentIds.length ? `<button class="btn-p btn-sm" onclick="printAll()">🖨️ Imprimir todos (${shipmentIds.length})</button>` : ''}
+      ${unprintedIds.length ? `<button class="btn-p btn-sm" onclick="printAll()">🖨️ Imprimir todos (${unprintedIds.length})</button>` : ''}
     </div>
     <div class="orders-list" id="ordersList">`;
 
-  for (const order of ordersData) {
-    const buyer     = order._shipment?.receiver_name || order.buyer?.nickname || '—';
-    const items     = order.order_items ?? [];
-    const shipId    = order.shipping?.id;
-    const dateStr   = order.date_closed ? timeAgo(order.date_closed) : '';
-    const addr      = order._shipment
+  function orderCardHtml(order, typeClass, typeBadgeClass, typeBadgeLabel) {
+    const buyer   = order._shipment?.receiver_name || order.buyer?.nickname || '—';
+    const items   = order.order_items ?? [];
+    const shipId  = order.shipping?.id;
+    const dateStr = order.date_closed ? timeAgo(order.date_closed) : '';
+    const addr    = order._shipment
         ? [order._shipment.street, order._shipment.city, order._shipment.state].filter(Boolean).join(', ')
         : '';
+    const printed  = shipId && isPrinted(shipId);
+    const btnClass = printed ? 'btn-p' : 'btn-ok';
+    const btnLabel = printed ? '↺ Reimprimir' : '🖨️ Imprimir etiqueta';
+    const cardCls  = ['order-card', typeClass, printed ? 'printed' : ''].filter(Boolean).join(' ');
 
     const itemsHtml = items.map(i =>
       `<div class="order-item-row"><span class="order-qty">×${i.quantity}</span><span>${i.item?.title ?? '—'}</span></div>`
     ).join('');
 
-    content += `
-      <div class="order-card" id="order-${order.id}">
+    return `
+      <div class="${cardCls}" id="order-${order.id}">
         <div class="order-head">
           <span class="order-id">#${order.id}</span>
           <span class="order-time">${dateStr}</span>
@@ -647,16 +778,37 @@ function renderOrdersArea(loading = false, errorMsg = null) {
         ${addr ? `<div class="order-dest">📍 ${addr}</div>` : ''}
         <div class="order-items">${itemsHtml}</div>
         <div class="order-footer">
-          ${order._status_label === 'paid'
-            ? `<span class="badge badge-warn" style="margin-right:auto">⏳ Pago confirmado</span>`
-            : `<span class="badge badge-ok" style="margin-right:auto">✓ Listo para despachar</span>`
+          <span class="badge ${typeBadgeClass}" style="margin-right:auto">${typeBadgeLabel}</span>
+          ${order._status_label === 'shipped'
+            ? `<span class="badge badge-shipped">🚚 Despachado</span>`
+            : order._status_label === 'paid'
+              ? `<span class="badge badge-warn">⏳ Pago confirmado</span>`
+              : `<span class="badge badge-ok">✓ Listo</span>`
           }
           ${shipId
-            ? `<button class="btn-p btn-sm print-btn" onclick="printOrder(${shipId}, document.getElementById('order-${order.id}'))">🖨️ Imprimir etiqueta</button>`
-            : `<span class="badge badge-warn">Sin ID de envío</span>`
+            ? `<a class="btn-s btn-sm" href="${API}/ml/zpl/${shipId}" download="etiqueta_${shipId}.zpl" title="Descargar ZPL">↓ ZPL</a>
+               <button class="${btnClass} btn-sm print-btn" onclick="printOrder(${shipId}, document.getElementById('order-${order.id}'), ${printed})">${btnLabel}</button>`
+            : `<span class="badge badge-warn">Sin ID envío</span>`
           }
         </div>
       </div>`;
+  }
+
+  if (flexOrders.length) {
+    content += `<div class="section-header flex-section">⚡ Envío Flex — ME2 (${flexOrders.length})</div>`;
+    flexOrders.forEach(o => { content += orderCardHtml(o, 'flex-type', 'badge-flex', '⚡ Flex'); });
+  }
+  if (correoOrders.length) {
+    content += `<div class="section-header correo-section">📮 Correo / Estándar (${correoOrders.length})</div>`;
+    correoOrders.forEach(o => { content += orderCardHtml(o, 'correo-type', 'badge-correo', '📮 Correo'); });
+  }
+  if (shippedOrders.length) {
+    content += `<div class="section-header" style="opacity:.6;border-color:#6495ed">🚚 Ya despachados hoy (${shippedOrders.length})</div>`;
+    shippedOrders.forEach(o => {
+      const lt = o._shipment?.logistic_type;
+      const [tc, bc, bl] = isFlexType(lt) ? ['flex-type','badge-flex','⚡ Flex'] : ['correo-type','badge-correo','📮 Correo'];
+      content += orderCardHtml(o, tc, bc, bl);
+    });
   }
 
   content += `</div>`;
@@ -669,6 +821,190 @@ function timeAgo(dateStr) {
   if (diff < 3600) return `hace ${Math.round(diff/60)} min`;
   if (diff < 86400)return `hace ${Math.round(diff/3600)} h`;
   return `hace ${Math.round(diff/86400)} d`;
+}
+
+// ── SSE / Auto-print ──────────────────────────────────────────────────────────
+let sseSource     = null;
+let apEnabled     = false;
+let apInterval    = 60;
+let apStatus      = 'idle';     // 'idle' | 'running' | 'error'
+let apCheckedAt   = 0;          // epoch seconds from server
+let apInitialized = false;
+let apError       = '';
+
+function connectSSE() {
+  if (sseSource || !mlUser) return;
+  sseSource = new EventSource(API + '/ml/events');
+
+  sseSource.addEventListener('poll_status', e => {
+    const d = JSON.parse(e.data);
+    if (d.enabled     !== undefined) apEnabled     = d.enabled;
+    if (d.interval    !== undefined) apInterval    = d.interval;
+    if (d.status      !== undefined) apStatus      = d.status;
+    if (d.checked_at  !== undefined) apCheckedAt   = d.checked_at;
+    if (d.initialized !== undefined) apInitialized = d.initialized;
+    if (d.error       !== undefined) apError       = d.error || '';
+    renderAutoprintBar();
+  });
+
+  sseSource.addEventListener('new_orders', e => {
+    const d = JSON.parse(e.data);
+    apCheckedAt = d.checked_at || (Date.now() / 1000);
+    const n = d.count || 1;
+    const plural = n > 1;
+    playBeep();
+    showNotification(
+      `${n} pedido${plural ? 's' : ''} nuevo${plural ? 's' : ''} en ML`,
+      'Imprimiendo etiquetas automáticamente…'
+    );
+    loadOrdersIfReady();
+  });
+
+  sseSource.addEventListener('auto_printed', e => {
+    const d = JSON.parse(e.data);
+    markPrinted(d.shipment_id);
+    // loadOrdersIfReady fue disparado por new_orders; solo actualizar estado visual del botón
+    const card = document.getElementById('order-' + d.order_id);
+    if (card) {
+      card.classList.remove('printing');
+      card.classList.add('printed');
+      const btn = card.querySelector('.print-btn');
+      if (btn) {
+        btn.classList.remove('btn-ok');
+        btn.classList.add('btn-p');
+        btn.textContent = '↺ Reimprimir';
+      }
+    }
+  });
+
+  sseSource.addEventListener('print_error', e => {
+    const d = JSON.parse(e.data);
+    console.warn('Auto-print error — envío', d.shipment_id, ':', d.error);
+  });
+
+  sseSource.onerror = () => {
+    sseSource.close();
+    sseSource = null;
+    setTimeout(() => { if (mlUser) connectSSE(); }, 5000);
+  };
+}
+
+function disconnectSSE() {
+  if (sseSource) { sseSource.close(); sseSource = null; }
+}
+
+// Actualiza el "hace X" cada 15 s sin re-renderizar todo
+setInterval(() => {
+  const el = document.getElementById('apStatusTxt');
+  if (el && apEnabled && apStatus === 'idle' && apCheckedAt) {
+    el.textContent = checkedAgoStr();
+  }
+}, 15000);
+
+async function toggleAutoprint() {
+  if (!apEnabled) await requestNotificationPermission();
+  try {
+    const r = await fetch(API + '/ml/autoprint', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ enabled: !apEnabled, interval: apInterval }),
+    });
+    const d = await r.json();
+    apEnabled = d.enabled;
+    renderAutoprintBar();
+  } catch(e) { console.warn('autoprint toggle:', e); }
+}
+
+async function setApInterval(val) {
+  apInterval = parseInt(val);
+  if (apEnabled) {
+    await fetch(API + '/ml/autoprint', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ interval: apInterval }),
+    });
+  }
+}
+
+function renderAutoprintBar() {
+  const bar = document.getElementById('autoprintBar');
+  if (!bar) return;
+  if (!mlUser) { bar.style.display = 'none'; return; }
+  bar.style.display = 'flex';
+  bar.className = 'autoprint-bar';
+
+  let dotCls, statusTxt;
+  if (!apEnabled) {
+    dotCls = 'off'; statusTxt = 'Inactivo';
+  } else if (apStatus === 'running') {
+    dotCls = 'run'; statusTxt = 'Verificando…';
+  } else if (apStatus === 'error') {
+    dotCls = 'err'; statusTxt = 'Error: ' + (apError || '?');
+  } else {
+    dotCls = 'on';
+    statusTxt = apCheckedAt ? checkedAgoStr() : 'Activo';
+  }
+
+  const btnLabel = apEnabled ? '⏹ Detener' : '🔔 Auto-imprimir';
+  const btnCls   = apEnabled ? 'btn-ap-on' : 'btn-ap-off';
+
+  bar.innerHTML = `
+    <span class="ap-label">Auto-impresión</span>
+    <div class="ap-status">
+      <span class="ap-dot ${dotCls}"></span>
+      <span id="apStatusTxt">${statusTxt}</span>
+    </div>
+    <span class="ap-spacer"></span>
+    <select class="ap-select" onchange="setApInterval(this.value)">
+      <option value="30"  ${apInterval===30  ?'selected':''}>cada 30 s</option>
+      <option value="60"  ${apInterval===60  ?'selected':''}>cada 1 min</option>
+      <option value="120" ${apInterval===120 ?'selected':''}>cada 2 min</option>
+      <option value="300" ${apInterval===300 ?'selected':''}>cada 5 min</option>
+    </select>
+    <button class="btn-sm ${btnCls}" onclick="toggleAutoprint()">${btnLabel}</button>`;
+}
+
+function checkedAgoStr() {
+  if (!apCheckedAt) return 'Activo';
+  const s = Math.round(Date.now() / 1000 - apCheckedAt);
+  if (s < 10)   return 'recién verificado';
+  if (s < 60)   return `hace ${s}s`;
+  if (s < 3600) return `hace ${Math.round(s / 60)}min`;
+  return `hace ${Math.round(s / 3600)}h`;
+}
+
+// ── Notificaciones del navegador ──────────────────────────────────────────────
+async function requestNotificationPermission() {
+  if (!('Notification' in window)) return false;
+  if (Notification.permission === 'granted') return true;
+  if (Notification.permission !== 'denied') {
+    const p = await Notification.requestPermission();
+    return p === 'granted';
+  }
+  return false;
+}
+
+function showNotification(title, body) {
+  if (!('Notification' in window) || Notification.permission !== 'granted') return;
+  try { new Notification(title, { body }); } catch(e) {}
+}
+
+// Triple beep ascendente
+function playBeep() {
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    [880, 1100, 1320].forEach((freq, i) => {
+      const t = ctx.currentTime + i * 0.18;
+      const o = ctx.createOscillator();
+      const g = ctx.createGain();
+      o.connect(g); g.connect(ctx.destination);
+      o.frequency.value = freq; o.type = 'sine';
+      g.gain.setValueAtTime(0, t);
+      g.gain.linearRampToValueAtTime(0.22, t + 0.03);
+      g.gain.exponentialRampToValueAtTime(0.001, t + 0.16);
+      o.start(t); o.stop(t + 0.2);
+    });
+  } catch(e) {}
 }
 
 init();

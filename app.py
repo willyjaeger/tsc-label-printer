@@ -9,7 +9,10 @@ import time
 import secrets
 import hashlib
 import base64
+import zipfile
+import io
 from concurrent.futures import ThreadPoolExecutor
+import queue as queue_module
 
 try:
     import requests as http
@@ -45,6 +48,22 @@ REDIRECT_URI = 'https://willyjaeger.github.io/tsc-label-printer/callback.html'
 
 # PKCE: almacena {state: code_verifier} durante el flujo OAuth (en memoria, vida corta)
 _pkce_store = {}
+
+# ── SSE / Auto-print state ──────────────────────────────────────────────────────
+_sse_clients      = []           # una Queue por cada cliente SSE conectado
+_sse_clients_lock = threading.Lock()
+
+_poll = {
+    'enabled':     False,
+    'interval':    60,           # segundos entre verificaciones
+    'last_check':  0.0,
+    'checked_at':  0.0,
+    'known_ids':   set(),        # IDs de pedidos ya vistos
+    'initialized': False,        # True tras la primera pasada (sin imprimir)
+    'status':      'idle',       # 'idle' | 'running' | 'error'
+    'error':       '',
+}
+_poll_lock = threading.Lock()
 
 
 def _pkce_pair():
@@ -131,6 +150,190 @@ def ml_get(path, token, **kwargs):
     )
 
 
+# ── SSE helpers ───────────────────────────────────────────────────────────────
+
+def _push_event(event_type, data):
+    """Envía un evento SSE a todos los clientes conectados."""
+    msg = f"event: {event_type}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+    with _sse_clients_lock:
+        for q in list(_sse_clients):
+            try:
+                q.put_nowait(msg)
+            except queue_module.Full:
+                pass
+
+
+# ── Background polling worker ─────────────────────────────────────────────────
+
+def _poll_worker():
+    """Hilo daemon: verifica pedidos nuevos y los imprime automáticamente."""
+    while True:
+        time.sleep(1)
+
+        with _poll_lock:
+            if not _poll['enabled']:
+                continue
+            interval   = _poll['interval']
+            last_check = _poll['last_check']
+
+        if time.time() - last_check < interval:
+            continue
+
+        # ── Hora de verificar ──────────────────────────────────────────────
+        token = get_valid_token()
+        if not token:
+            now = time.time()
+            with _poll_lock:
+                _poll['status']     = 'error'
+                _poll['error']      = 'Sin sesión ML activa'
+                _poll['last_check'] = now
+                _poll['checked_at'] = now
+            _push_event('poll_status', {'status': 'error',
+                                        'error':  'Sin sesión ML activa',
+                                        'checked_at': now})
+            continue
+
+        with _poll_lock:
+            _poll['status'] = 'running'
+        _push_event('poll_status', {'status': 'running', 'checked_at': time.time()})
+
+        try:
+            cfg     = load_config()
+            user_id = cfg.get('ml_user_id')
+            if not user_id:
+                r = http.get(ML_API + '/users/me',
+                             headers={'Authorization': f'Bearer {token}'}, timeout=10)
+                user_id = r.json().get('id')
+                cfg['ml_user_id'] = user_id
+                save_config(cfg)
+
+            from datetime import datetime, timezone, timedelta
+            tz_arg = timezone(timedelta(hours=-3))
+
+            all_orders, seen = [], set()
+            for status in ('ready_to_ship', 'paid'):
+                r = http.get(ML_API + '/orders/search',
+                             headers={'Authorization': f'Bearer {token}'},
+                             params={'seller': user_id, 'order.status': status,
+                                     'sort': 'date_desc', 'limit': 50},
+                             timeout=15)
+                for o in r.json().get('results', []):
+                    if o['id'] not in seen:
+                        o['_status_label'] = status
+                        all_orders.append(o)
+                        seen.add(o['id'])
+
+            # Detalles de envío en paralelo + filtrar fulfillment
+            ship_ids = [o.get('shipping', {}).get('id') for o in all_orders]
+            ship_ids = [s for s in ship_ids if s]
+            shipment_data = {}
+            with ThreadPoolExecutor(max_workers=8) as pool:
+                futures = {pool.submit(_fetch_shipment, sid, token): sid for sid in ship_ids}
+                for fut in futures:
+                    sid, data = fut.result()
+                    shipment_data[sid] = data
+
+            printable = []
+            for o in all_orders:
+                sid  = o.get('shipping', {}).get('id')
+                info = shipment_data.get(sid, {})
+                if info.get('logistic_type') == 'fulfillment':
+                    continue
+                o['_shipment'] = info
+                printable.append(o)
+
+            current_ids = {o['id'] for o in printable}
+            now = time.time()
+
+            with _poll_lock:
+                was_initialized  = _poll['initialized']
+                known_ids        = _poll['known_ids'].copy()
+                _poll['known_ids']   = current_ids
+                _poll['initialized'] = True
+                _poll['last_check']  = now
+                _poll['checked_at']  = now
+                _poll['status']      = 'idle'
+                _poll['error']       = ''
+
+            new_orders = [o for o in printable if o['id'] not in known_ids]
+
+            if not was_initialized:
+                # Primera pasada: solo registrar IDs existentes, no imprimir
+                _push_event('poll_status', {
+                    'status': 'idle', 'checked_at': now,
+                    'initialized': True, 'count': len(printable),
+                })
+            elif new_orders:
+                # Pedidos nuevos detectados → notificar y auto-imprimir
+                _push_event('new_orders', {
+                    'count':      len(new_orders),
+                    'checked_at': now,
+                    'orders': [{'id': o['id'],
+                                'shipment_id': o.get('shipping', {}).get('id')}
+                               for o in new_orders],
+                })
+                for o in new_orders:
+                    sid = o.get('shipping', {}).get('id')
+                    if not sid:
+                        continue
+                    try:
+                        r = http.get(
+                            f'{ML_API}/shipment_labels',
+                            params={'shipment_ids': sid, 'response_type': 'zpl2'},
+                            headers={'Authorization': f'Bearer {token}'},
+                            timeout=20,
+                        )
+                        zpl, err = _extract_zpl(
+                            r.content, r.status_code, r.text,
+                            r.headers.get('content-type', ''),
+                        )
+                        if err:
+                            _push_event('print_error', {'shipment_id': sid, 'error': err})
+                            continue
+                        order_data = {
+                            'order_id':    o['id'],
+                            'shipment_id': str(sid),
+                            'buyer':       (o.get('_shipment') or {}).get('receiver_name')
+                                           or (o.get('buyer') or {}).get('nickname', ''),
+                            'items':       [
+                                {'qty': i['quantity'],
+                                 'title': (i.get('item') or {}).get('title', '')}
+                                for i in o.get('order_items', [])
+                            ],
+                        }
+                        corr = next_correlative()
+                        order_data['correlative'] = corr
+                        payload = (_inject_correlative_into_zpl(zpl, corr)
+                                   + _build_detail_zpl(order_data, cfg))
+                        send_to_printer(cfg['ip'], cfg['port'], payload)
+                        _push_event('auto_printed', {
+                            'shipment_id': sid,
+                            'order_id':    o['id'],
+                            'buyer':       order_data['buyer'],
+                        })
+                    except Exception as pe:
+                        _push_event('print_error', {'shipment_id': sid, 'error': str(pe)})
+
+                _push_event('poll_status', {
+                    'status': 'idle', 'checked_at': now, 'count': len(printable),
+                })
+            else:
+                _push_event('poll_status', {
+                    'status': 'idle', 'checked_at': now, 'count': len(printable),
+                })
+
+        except Exception as e:
+            now = time.time()
+            with _poll_lock:
+                _poll['status']     = 'error'
+                _poll['error']      = str(e)
+                _poll['last_check'] = now
+                _poll['checked_at'] = now
+            _push_event('poll_status', {
+                'status': 'error', 'error': str(e), 'checked_at': now,
+            })
+
+
 # ── Flask ──────────────────────────────────────────────────────────────────────
 
 app = Flask(__name__)
@@ -172,6 +375,18 @@ def print_label():
     raw = request.get_data()
     if not raw:
         return jsonify({'ok': False, 'error': 'Archivo vacío'}), 400
+
+    # Si es un ZIP (magic bytes PK), extraer el primer archivo
+    if raw[:2] == b'PK':
+        try:
+            with zipfile.ZipFile(io.BytesIO(raw)) as zf:
+                names = zf.namelist()
+                if not names:
+                    return jsonify({'ok': False, 'error': 'El ZIP está vacío'}), 400
+                raw = zf.read(names[0])
+        except zipfile.BadZipFile:
+            return jsonify({'ok': False, 'error': 'Archivo ZIP inválido'}), 400
+
     try:
         send_to_printer(cfg['ip'], cfg['port'], raw)
         return jsonify({'ok': True})
@@ -355,10 +570,14 @@ def ml_orders():
             return jsonify({'ok': False, 'error': str(e)}), 500
 
     try:
-        # 1. Traer órdenes en ambos estados
+        # 1. Traer órdenes: pendientes + las ya despachadas de hoy
+        from datetime import datetime, timezone, timedelta
+        tz_arg  = timezone(timedelta(hours=-3))  # Argentina UTC-3
+        today   = datetime.now(tz_arg).date()
+
         all_orders = []
         seen_ids   = set()
-        for status in ('ready_to_ship', 'paid'):
+        for status in ('ready_to_ship', 'paid', 'shipped'):
             r = ml_get('/orders/search', token, params={
                 'seller':       user_id,
                 'order.status': status,
@@ -366,10 +585,20 @@ def ml_orders():
                 'limit':        50,
             })
             for o in r.json().get('results', []):
-                if o['id'] not in seen_ids:
-                    o['_status_label'] = status
-                    all_orders.append(o)
-                    seen_ids.add(o['id'])
+                if o['id'] in seen_ids:
+                    continue
+                # Para "shipped": filtrar solo las actualizadas hoy (evitar historial)
+                if status == 'shipped':
+                    last_update = o.get('last_updated') or o.get('date_closed') or ''
+                    try:
+                        upd_date = datetime.fromisoformat(last_update.replace('Z', '+00:00')).astimezone(tz_arg).date()
+                        if upd_date != today:
+                            continue
+                    except Exception:
+                        continue
+                o['_status_label'] = status
+                all_orders.append(o)
+                seen_ids.add(o['id'])
 
         # 2. Traer detalle de envíos en paralelo (logistic_type + dirección)
         ship_ids = [(o.get('shipping', {}).get('id')) for o in all_orders]
@@ -397,13 +626,170 @@ def ml_orders():
         return jsonify({'ok': False, 'error': str(e)}), 500
 
 
-@app.route('/ml/print/<int:shipment_id>', methods=['POST'])
-def ml_print(shipment_id):
+def _extract_zpl(content, status_code, response_text, content_type):
+    """
+    Extrae el ZPL de la respuesta de ML. Retorna (zpl_bytes, error_msg).
+    ML puede devolver el ZPL directo o dentro de un ZIP.
+    """
+    if status_code != 200:
+        return None, f'ML devolvió {status_code}: {response_text[:300]}'
+    if 'html' in content_type.lower():
+        return None, 'ML devolvió una página HTML. El envío puede no tener etiqueta disponible aún o el token expiró.'
+    if not content:
+        return None, 'ML devolvió contenido vacío.'
+
+    # ZIP: magic bytes PK (0x50 0x4B)
+    if content[:2] == b'PK':
+        try:
+            with zipfile.ZipFile(io.BytesIO(content)) as zf:
+                names = zf.namelist()
+                if not names:
+                    return None, 'El ZIP de ML está vacío.'
+                zpl = zf.read(names[0])
+                return zpl, None
+        except zipfile.BadZipFile as e:
+            return None, f'ML devolvió un ZIP inválido: {e}'
+
+    # ZPL directo
+    stripped = content.strip()
+    if not stripped.upper().startswith(b'^XA'):
+        preview = stripped[:120].decode('utf-8', errors='replace')
+        return None, f'ML no devolvió ZPL válido. Respuesta: {preview}'
+    return content, None
+
+
+def _ascii_zpl(text):
+    table = str.maketrans('áéíóúÁÉÍÓÚñÑüÜ', 'aeiouAEIOUnNuU')
+    return text.translate(table)
+
+
+def next_correlative():
+    """Número secuencial del día. Se reinicia automáticamente cada jornada."""
+    from datetime import date
+    today = date.today().isoformat()
+    cfg = load_config()
+    if cfg.get('_correlative_date') != today:
+        cfg['_correlative'] = 0
+        cfg['_correlative_date'] = today
+    n = int(cfg.get('_correlative', 0)) + 1
+    cfg['_correlative'] = n
+    save_config(cfg)
+    return n
+
+
+def _inject_correlative_into_zpl(zpl_bytes, number):
+    """Inyecta #NNN en la primera etiqueta del ZPL de ML, cerca de la zona de dirección.
+
+    Usa ^A0 (CG Triumvirate) — fuente limpia y moderna.
+    Posición: esquina inferior-derecha, donde ML deja espacio libre.
+    """
+    num_str = f'#{number:03d}'
+    # ^A0N,h,w → fuente A0 (sans-serif moderna), orientación normal
+    # ^FB760,1,0,R,0 = bloque de 760 dots, 1 línea, alineado a la DERECHA
+    field = f'^FO15,880^FB760,1,0,R,0^A0N,100,50^FD{num_str}^FS\r\n'.encode('latin-1')
+    idx = zpl_bytes.upper().find(b'^XZ')
+    if idx == -1:
+        return zpl_bytes
+    return zpl_bytes[:idx] + field + zpl_bytes[idx:]
+
+
+def _build_detail_zpl(order_data, cfg):
+    """Etiqueta de detalle: correlativo grande arriba, código de barras, artículos con separadores."""
+    dpi = int(cfg.get('dpi', 203))
+    dpm = dpi / 25.4
+    w   = round(float(cfg.get('label_width_mm',  100)) * dpm)
+    h   = round(float(cfg.get('label_height_mm', 150)) * dpm)
+
+    buyer       = _ascii_zpl(str(order_data.get('buyer',       '')))[:38]
+    order_id    = str(order_data.get('order_id',    ''))
+    shipment_id = str(order_data.get('shipment_id', ''))
+    correlative = order_data.get('correlative')
+    items       = order_data.get('items', [])
+
+    m = 25
+    y = 12
+
+    lines = ['^XA', f'^PW{w}', f'^LL{h}']
+
+    def txt(fh, fw, content, indent=0):
+        nonlocal y
+        lines.append(f'^FO{m + indent},{y}^ADN,{fh},{fw}^FD{str(content)[:60]}^FS')
+        y += fh + 10
+
+    def hsep(thick=1):
+        nonlocal y
+        lines.append(f'^FO{m},{y}^GB{w - m * 2},{thick},{thick}^FS')
+        y += thick + 7
+
+    # ── Correlativo grande ───────────────────────────────────────────────────
+    if correlative is not None:
+        lines.append(f'^FO{m},{y}^A0N,95,48^FD#{correlative:03d}^FS')
+        y += 108
+
+    # ── Código de barras del envío ───────────────────────────────────────────
+    if shipment_id:
+        lines.append('^BY3')
+        lines.append(f'^FO{m},{y}^BCN,90,Y,N,N^FD{shipment_id}^FS')
+        y += 124
+
+    # ── Datos del pedido ─────────────────────────────────────────────────────
+    hsep(2)
+    if order_id:
+        txt(20, 10, f'Pedido # {order_id}')
+    if buyer:
+        txt(23, 11, buyer)
+    hsep(2)
+
+    # ── Artículos: viñeta + word wrap automático ─────────────────────────────
+    fld_w = w - m - 22 - m   # ancho disponible después de la viñeta
+    cpl   = max(25, fld_w // 14)   # chars estimados por línea (ADN,34,17)
+    first = True
+    for item in items:
+        if y > h - 55:
+            lines.append(f'^FO{m},{y}^ADN,22,11^FD... y mas articulos^FS')
+            break
+        if not first:
+            hsep(1)
+        first = False
+        qty   = item.get('qty', 1)
+        title = _ascii_zpl(str(item.get('title', '')))
+        label = f'x{qty}  {title}'
+        nlines = max(1, min(3, (len(label) + cpl - 1) // cpl))
+        lines.append(f'^FO{m},{y + 10}^GB14,14,14^FS')
+        lines.append(f'^FO{m + 22},{y}^ADN,34,17^FB{fld_w},{nlines},0,L,0^FD{label}^FS')
+        y += nlines * 44 + 5
+
+    lines.append('^XZ')
+    return ('\r\n'.join(lines) + '\r\n').encode('latin-1', errors='replace')
+
+
+@app.route('/ml/debug-orders')
+def ml_debug_orders():
+    token = get_valid_token()
+    if not token:
+        return jsonify({'ok': False, 'error': 'no token'}), 401
+    cfg = load_config()
+    user_id = cfg.get('ml_user_id')
+    results = {}
+    for status in ('ready_to_ship', 'paid', 'shipped', 'delivered', 'cancelled'):
+        r = ml_get('/orders/search', token, params={
+            'seller': user_id, 'order.status': status,
+            'sort': 'date_desc', 'limit': 5,
+        })
+        data = r.json()
+        results[status] = {
+            'count': data.get('paging', {}).get('total', '?'),
+            'sample': [{'id': o['id'], 'date_closed': o.get('date_closed'), 'last_updated': o.get('last_updated')} for o in data.get('results', [])[:3]],
+        }
+    return jsonify(results)
+
+
+@app.route('/ml/zpl/<int:shipment_id>')
+def ml_zpl_preview(shipment_id):
+    """Descarga el ZPL de ML sin imprimir (para diagnóstico)."""
     token = get_valid_token()
     if not token:
         return jsonify({'ok': False, 'need_login': True}), 401
-
-    cfg = load_config()
     try:
         r = http.get(
             f'{ML_API}/shipment_labels',
@@ -411,10 +797,45 @@ def ml_print(shipment_id):
             headers={'Authorization': f'Bearer {token}'},
             timeout=20,
         )
-        if r.status_code != 200:
-            return jsonify({'ok': False, 'error': f'ML devolvió {r.status_code}: {r.text[:200]}'}), 502
+        zpl, err = _extract_zpl(r.content, r.status_code, r.text, r.headers.get('content-type', ''))
+        if err:
+            return err, 502, {'Content-Type': 'text/plain; charset=utf-8'}
+        return zpl, 200, {
+            'Content-Type': 'text/plain; charset=utf-8',
+            'Content-Disposition': f'attachment; filename="etiqueta_{shipment_id}.zpl"',
+        }
+    except Exception as e:
+        return str(e), 500
 
-        send_to_printer(cfg['ip'], cfg['port'], r.content)
+
+@app.route('/ml/print/<int:shipment_id>', methods=['POST'])
+def ml_print(shipment_id):
+    token = get_valid_token()
+    if not token:
+        return jsonify({'ok': False, 'need_login': True}), 401
+
+    cfg        = load_config()
+    order_data = request.get_json(silent=True) or {}
+    try:
+        r = http.get(
+            f'{ML_API}/shipment_labels',
+            params={'shipment_ids': shipment_id, 'response_type': 'zpl2'},
+            headers={'Authorization': f'Bearer {token}'},
+            timeout=20,
+        )
+        zpl, err = _extract_zpl(r.content, r.status_code, r.text, r.headers.get('content-type', ''))
+        if err:
+            return jsonify({'ok': False, 'error': err}), 502
+
+        if order_data.get('items'):
+            corr = next_correlative()
+            order_data['shipment_id'] = str(shipment_id)
+            order_data['correlative'] = corr
+            payload = _inject_correlative_into_zpl(zpl, corr) + _build_detail_zpl(order_data, cfg)
+        else:
+            payload = zpl
+
+        send_to_printer(cfg['ip'], cfg['port'], payload)
         return jsonify({'ok': True})
     except socket.timeout:
         return jsonify({'ok': False, 'error': f"Timeout de impresora: {cfg['ip']}:{cfg['port']}"}), 500
@@ -424,32 +845,131 @@ def ml_print(shipment_id):
 
 @app.route('/ml/print-all', methods=['POST'])
 def ml_print_all():
-    """Imprime etiquetas de todos los envíos enviados en el body."""
+    """Imprime etiqueta + detalle por cada pedido, en pares consecutivos."""
     token = get_valid_token()
     if not token:
         return jsonify({'ok': False, 'need_login': True}), 401
 
-    cfg = load_config()
-    shipment_ids = request.get_json().get('shipment_ids', [])
-    if not shipment_ids:
+    cfg    = load_config()
+    body   = request.get_json() or {}
+    orders = body.get('orders', [])
+    if not orders:
         return jsonify({'ok': False, 'error': 'Sin envíos'}), 400
 
-    # ML permite hasta 50 IDs por request
-    ids_str = ','.join(str(i) for i in shipment_ids[:50])
-    try:
-        r = http.get(
-            f'{ML_API}/shipment_labels',
-            params={'shipment_ids': ids_str, 'response_type': 'zpl2'},
-            headers={'Authorization': f'Bearer {token}'},
-            timeout=30,
-        )
-        if r.status_code != 200:
-            return jsonify({'ok': False, 'error': f'ML devolvió {r.status_code}'}), 502
+    combined = b''
+    failed   = []
 
-        send_to_printer(cfg['ip'], cfg['port'], r.content)
-        return jsonify({'ok': True, 'printed': len(shipment_ids)})
+    for order in orders[:50]:
+        sid = order.get('shipment_id')
+        if not sid:
+            continue
+        try:
+            r = http.get(
+                f'{ML_API}/shipment_labels',
+                params={'shipment_ids': sid, 'response_type': 'zpl2'},
+                headers={'Authorization': f'Bearer {token}'},
+                timeout=20,
+            )
+            zpl, err = _extract_zpl(r.content, r.status_code, r.text, r.headers.get('content-type', ''))
+            if err:
+                failed.append(str(sid))
+                continue
+            order['shipment_id'] = str(sid)
+            if order.get('items'):
+                corr = next_correlative()
+                order['correlative'] = corr
+                combined += _inject_correlative_into_zpl(zpl, corr) + _build_detail_zpl(order, cfg)
+            else:
+                combined += zpl
+        except Exception:
+            failed.append(str(sid))
+
+    if not combined:
+        return jsonify({'ok': False, 'error': 'No se pudo obtener ninguna etiqueta.'}), 502
+
+    try:
+        send_to_printer(cfg['ip'], cfg['port'], combined)
+        return jsonify({'ok': True, 'printed': len(orders) - len(failed), 'failed': failed})
+    except socket.timeout:
+        return jsonify({'ok': False, 'error': f"Timeout de impresora: {cfg['ip']}:{cfg['port']}"}), 500
     except Exception as e:
         return jsonify({'ok': False, 'error': str(e)}), 500
+
+
+# ── SSE stream ────────────────────────────────────────────────────────────────
+
+@app.route('/ml/events')
+def ml_events():
+    def generate():
+        q = queue_module.Queue(maxsize=200)
+        with _sse_clients_lock:
+            _sse_clients.append(q)
+        try:
+            # Enviar estado actual al conectar
+            with _poll_lock:
+                init_data = {
+                    'enabled':     _poll['enabled'],
+                    'interval':    _poll['interval'],
+                    'status':      _poll['status'],
+                    'checked_at':  _poll['checked_at'],
+                    'initialized': _poll['initialized'],
+                }
+            yield f"event: poll_status\ndata: {json.dumps(init_data)}\n\n"
+            while True:
+                try:
+                    msg = q.get(timeout=25)
+                    yield msg
+                except queue_module.Empty:
+                    yield ': keepalive\n\n'   # heartbeat (SSE comment)
+        finally:
+            with _sse_clients_lock:
+                try:
+                    _sse_clients.remove(q)
+                except ValueError:
+                    pass
+
+    return app.response_class(
+        generate(),
+        mimetype='text/event-stream',
+        headers={
+            'Cache-Control':     'no-cache',
+            'X-Accel-Buffering': 'no',
+        },
+    )
+
+
+# ── Auto-print config ──────────────────────────────────────────────────────────
+
+@app.route('/ml/autoprint', methods=['GET'])
+def ml_autoprint_get():
+    with _poll_lock:
+        return jsonify({
+            'enabled':     _poll['enabled'],
+            'interval':    _poll['interval'],
+            'status':      _poll['status'],
+            'error':       _poll['error'],
+            'checked_at':  _poll['checked_at'],
+            'initialized': _poll['initialized'],
+        })
+
+
+@app.route('/ml/autoprint', methods=['POST'])
+def ml_autoprint_set():
+    body = request.get_json(silent=True) or {}
+    with _poll_lock:
+        if 'enabled' in body:
+            new_val = bool(body['enabled'])
+            if new_val and not _poll['enabled']:
+                # Al activar: hacer snapshot inicial sin imprimir
+                _poll['initialized'] = False
+                _poll['known_ids']   = set()
+                _poll['last_check']  = 0.0   # disparar de inmediato
+            _poll['enabled'] = new_val
+        if 'interval' in body:
+            _poll['interval'] = max(30, int(body['interval']))
+    with _poll_lock:
+        return jsonify({'ok': True, 'enabled': _poll['enabled'],
+                        'interval': _poll['interval']})
 
 
 # ── Startup ────────────────────────────────────────────────────────────────────
@@ -457,11 +977,12 @@ def ml_print_all():
 def run_flask():
     import logging
     logging.getLogger('werkzeug').setLevel(logging.ERROR)
-    app.run(host='127.0.0.1', port=5050, debug=False, use_reloader=False)
+    app.run(host='127.0.0.1', port=5050, debug=False, use_reloader=False, threaded=True)
 
 
 def start():
     threading.Thread(target=run_flask, daemon=True).start()
+    threading.Thread(target=_poll_worker, daemon=True).start()
     time.sleep(1.2)
     webbrowser.open('http://localhost:5050')
 

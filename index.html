@@ -537,13 +537,30 @@ async function testPrint() {
 }
 
 async function runAutoCal() {
-  if (!confirm('Esto avanzará varias etiquetas para detectar el gap.\n¿Continuar?')) return;
+  // Doble-click para confirmar: primer click cambia el botón, segundo ejecuta
+  const btn = document.querySelector('[onclick="runAutoCal()"]');
+  if (btn && !btn.dataset.armed) {
+    btn.dataset.armed = '1';
+    btn.textContent = '⚠️ ¿Confirmar? (click de nuevo)';
+    btn.style.background = 'rgba(224,85,85,.35)';
+    setCalStatus('loading', '⚠️ Hacé click de nuevo para ejecutar ~JA…');
+    setTimeout(() => {
+      if (btn) { btn.dataset.armed = ''; btn.textContent = 'Auto-calibrar (~JA) ⚠️'; btn.style.background = ''; }
+      setCalStatus('idle', '—');
+    }, 4000);
+    return;
+  }
+  if (btn) { btn.dataset.armed = ''; btn.textContent = 'Auto-calibrar (~JA) ⚠️'; btn.style.background = ''; }
   setCalStatus('loading', 'Ejecutando ~JA…');
   try {
     const r = await fetch(API + '/autocal', { method:'POST' });
     const d = await r.json();
-    d.ok ? setCalStatus('ok', '✓ Auto-calibración enviada') : setCalStatus('err', '✗ ' + d.error);
-  } catch(e) { setCalStatus('err', e.message); }
+    if (d.ok) {
+      setCalStatus('ok', '✓ ~JA enviado — la impresora está calibrando');
+    } else {
+      setCalStatus('err', '✗ ' + d.error);
+    }
+  } catch(e) { setCalStatus('err', '✗ ' + e.message); }
 }
 
 function setCalStatus(type, msg) {

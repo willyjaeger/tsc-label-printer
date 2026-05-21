@@ -425,8 +425,14 @@ def calibrate():
 def autocal():
     cfg = load_config()
     try:
-        send_to_printer(cfg['ip'], cfg['port'], '~JA')
+        # ~JC = Calibrate media (detecta gap avanzando etiquetas)
+        # ~JA sería "Cancel All" — no es calibración
+        send_to_printer(cfg['ip'], cfg['port'], '~JC')
         return jsonify({'ok': True})
+    except socket.timeout:
+        return jsonify({'ok': False, 'error': f"Timeout: no se pudo conectar a {cfg['ip']}:{cfg['port']}"}), 500
+    except ConnectionRefusedError:
+        return jsonify({'ok': False, 'error': f"Conexión rechazada en {cfg['ip']}:{cfg['port']} — ¿está encendida?"}), 500
     except Exception as e:
         return jsonify({'ok': False, 'error': str(e)}), 500
 

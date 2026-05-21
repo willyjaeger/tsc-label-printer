@@ -322,7 +322,7 @@ footer { text-align:center; font-size:.7rem; color:var(--text2); margin-top:20px
         <div class="cal-actions">
           <button class="btn-p btn-sm" onclick="applyCalibration()">Aplicar calibración</button>
           <button class="btn-s btn-sm" onclick="testPrint()">Imprimir test</button>
-          <button class="btn-d btn-sm" onclick="runAutoCal()">Auto-calibrar (~JA) ⚠️</button>
+          <button class="btn-d btn-sm" onclick="runAutoCal(this)">Auto-calibrar (~JC) ⚠️</button>
         </div>
         <div class="hint" style="margin-top:10px;padding:9px 11px;background:rgba(224,85,85,.07);border-radius:6px;border-left:2px solid rgba(224,85,85,.3)">
           ⚠️ Auto-calibrar avanza varias etiquetas para detectar el gap. Usar solo si la alineación está muy desviada.
@@ -536,37 +536,49 @@ async function testPrint() {
   } catch(e) { setCalStatus('err', e.message); }
 }
 
-async function runAutoCal() {
-  // Doble-click para confirmar: primer click cambia el botón, segundo ejecuta
-  const btn = document.querySelector('[onclick="runAutoCal()"]');
-  if (btn && !btn.dataset.armed) {
-    btn.dataset.armed = '1';
-    btn.textContent = '⚠️ ¿Confirmar? (click de nuevo)';
-    btn.style.background = 'rgba(224,85,85,.35)';
-    setCalStatus('loading', '⚠️ Hacé click de nuevo para ejecutar ~JA…');
-    setTimeout(() => {
-      if (btn) { btn.dataset.armed = ''; btn.textContent = 'Auto-calibrar (~JA) ⚠️'; btn.style.background = ''; }
-      setCalStatus('idle', '—');
-    }, 4000);
-    return;
-  }
-  if (btn) { btn.dataset.armed = ''; btn.textContent = 'Auto-calibrar (~JA) ⚠️'; btn.style.background = ''; }
-  setCalStatus('loading', 'Ejecutando ~JA…');
+async function runAutoCal(btn) {
+  btn.disabled = true;
+  const orig = btn.textContent;
+  btn.textContent = '⏳ Calibrando…';
+  setCalStatus('loading', 'Enviando ~JC a la impresora…');
   try {
     const r = await fetch(API + '/autocal', { method:'POST' });
     const d = await r.json();
     if (d.ok) {
-      setCalStatus('ok', '✓ ~JA enviado — la impresora está calibrando');
+      setCalStatus('ok', '✓ Comando enviado — la impresora está avanzando etiquetas');
+      toast('✓ Calibración iniciada', 'ok');
     } else {
       setCalStatus('err', '✗ ' + d.error);
+      toast('✗ ' + d.error, 'err');
     }
-  } catch(e) { setCalStatus('err', '✗ ' + e.message); }
+  } catch(e) {
+    const msg = 'No se pudo conectar con la app (¿está corriendo?)';
+    setCalStatus('err', '✗ ' + msg);
+    toast('✗ ' + msg, 'err');
+  }
+  btn.disabled = false;
+  btn.textContent = orig;
 }
 
 function setCalStatus(type, msg) {
   const b = document.getElementById('calStatus');
   b.className = 'status-bar ' + type;
   document.getElementById('calStatusText').textContent = msg;
+}
+
+function toast(msg, type = 'ok') {
+  const colors = { ok: '#4caf88', err: '#e05555', warn: '#f5a623' };
+  const t = document.createElement('div');
+  t.style.cssText = [
+    'position:fixed', 'bottom:24px', 'left:50%', 'transform:translateX(-50%)',
+    'padding:13px 22px', 'border-radius:9px', 'font-size:.88rem', 'font-weight:600',
+    'z-index:9999', `background:${colors[type]||colors.ok}`, 'color:#111',
+    'box-shadow:0 4px 20px rgba(0,0,0,.45)', 'transition:opacity .35s',
+    'white-space:nowrap', 'pointer-events:none',
+  ].join(';');
+  t.textContent = msg;
+  document.body.appendChild(t);
+  setTimeout(() => { t.style.opacity = '0'; setTimeout(() => t.remove(), 380); }, 3200);
 }
 
 // ── ML Auth ───────────────────────────────────────────

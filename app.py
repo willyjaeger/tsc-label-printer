@@ -387,9 +387,10 @@ def print_label():
         except zipfile.BadZipFile:
             return jsonify({'ok': False, 'error': 'Archivo ZIP inválido'}), 400
 
+    n_labels = count_labels(raw)
     try:
         send_to_printer(cfg['ip'], cfg['port'], raw)
-        return jsonify({'ok': True})
+        return jsonify({'ok': True, 'labels': n_labels})
     except socket.timeout:
         return jsonify({'ok': False, 'error': f"Timeout: no se pudo conectar a {cfg['ip']}:{cfg['port']}"}), 500
     except ConnectionRefusedError:
@@ -664,6 +665,12 @@ def _extract_zpl(content, status_code, response_text, content_type):
     return content, None
 
 
+def count_labels(data: bytes) -> int:
+    """Cuenta etiquetas en un bloque ZPL contando ocurrencias de ^XA."""
+    import re as _re
+    return max(1, len(_re.findall(rb'\^XA', data, _re.IGNORECASE)))
+
+
 def _ascii_zpl(text):
     table = str.maketrans('áéíóúÁÉÍÓÚñÑüÜ', 'aeiouAEIOUnNuU')
     return text.translate(table)
@@ -841,8 +848,9 @@ def ml_print(shipment_id):
         else:
             payload = zpl
 
+        n_labels = count_labels(payload)
         send_to_printer(cfg['ip'], cfg['port'], payload)
-        return jsonify({'ok': True})
+        return jsonify({'ok': True, 'labels': n_labels})
     except socket.timeout:
         return jsonify({'ok': False, 'error': f"Timeout de impresora: {cfg['ip']}:{cfg['port']}"}), 500
     except Exception as e:
@@ -893,11 +901,35 @@ def ml_print_all():
     if not combined:
         return jsonify({'ok': False, 'error': 'No se pudo obtener ninguna etiqueta.'}), 502
 
+    n_labels = count_labels(combined)
     try:
         send_to_printer(cfg['ip'], cfg['port'], combined)
-        return jsonify({'ok': True, 'printed': len(orders) - len(failed), 'failed': failed})
+        return jsonify({'ok': True, 'printed': len(orders) - len(failed),
+                        'labels': n_labels, 'failed': failed})
     except socket.timeout:
         return jsonify({'ok': False, 'error': f"Timeout de impresora: {cfg['ip']}:{cfg['port']}"}), 500
+    except Exception as e:
+        return jsonify({'ok': False, 'error': str(e)}), 500
+
+
+# ── Retroceder papel ──────────────────────────────────────────────────────────
+
+@app.route('/retract', methods=['POST'])
+def retract():
+    """Envía comando TSPL REVERSE {dots} para retroceder el papel."""
+    cfg  = load_config()
+    body = request.get_json(silent=True) or {}
+    dots = int(body.get('dots', 0))
+    if dots <= 0:
+        return jsonify({'ok': False, 'error': 'dots debe ser > 0'}), 400
+    try:
+        # TSPL: REVERSE n retrocede n dots (funciona en TSC incluso en modo ZPL)
+        send_to_printer(cfg['ip'], cfg['port'], f'REVERSE {dots}\r\n'.encode())
+        return jsonify({'ok': True, 'dots': dots})
+    except socket.timeout:
+        return jsonify({'ok': False, 'error': f"Timeout: {cfg['ip']}:{cfg['port']}"}), 500
+    except ConnectionRefusedError:
+        return jsonify({'ok': False, 'error': 'Conexión rechazada'}), 500
     except Exception as e:
         return jsonify({'ok': False, 'error': str(e)}), 500
 

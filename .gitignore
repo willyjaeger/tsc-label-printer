@@ -11,5 +11,5 @@ __pycache__/
 *.pyc
 *.pyo
 
-# VS Code
-.vscode/
+# VS Code (solo settings locales, no el workspace compartido)
+.vscode/*.code-workspace

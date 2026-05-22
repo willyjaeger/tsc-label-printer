@@ -1,0 +1,35 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Instalar dependencias",
+      "type": "shell",
+      "command": "pip install -r requirements.txt",
+      "group": "build",
+      "presentation": { "reveal": "always", "panel": "shared" }
+    },
+    {
+      "label": "Build .exe",
+      "type": "shell",
+      "command": "python -m PyInstaller --onefile --noconsole --add-data \"index.html;.\" --hidden-import=flask --hidden-import=werkzeug --hidden-import=tkinter --hidden-import=requests --collect-all=requests --name TSC-Label-Printer app.py",
+      "group": { "kind": "build", "isDefault": true },
+      "presentation": { "reveal": "always", "panel": "shared" },
+      "problemMatcher": []
+    },
+    {
+      "label": "Git: commit + push",
+      "type": "shell",
+      "command": "git add -A && git commit -m \"${input:commitMsg}\" && git push",
+      "group": "none",
+      "presentation": { "reveal": "always", "panel": "shared" }
+    }
+  ],
+  "inputs": [
+    {
+      "id": "commitMsg",
+      "type": "promptString",
+      "description": "Mensaje del commit",
+      "default": "update"
+    }
+  ]
+}

@@ -923,8 +923,8 @@ def retract():
     if dots <= 0:
         return jsonify({'ok': False, 'error': 'dots debe ser > 0'}), 400
     try:
-        # TSPL: REVERSE n retrocede n dots (funciona en TSC incluso en modo ZPL)
-        send_to_printer(cfg['ip'], cfg['port'], f'REVERSE {dots}\r\n'.encode())
+        # TSPL: BACKFEED n retrocede n dots (comando nativo TSC)
+        send_to_printer(cfg['ip'], cfg['port'], f'BACKFEED {dots}\r\n'.encode())
         return jsonify({'ok': True, 'dots': dots})
     except socket.timeout:
         return jsonify({'ok': False, 'error': f"Timeout: {cfg['ip']}:{cfg['port']}"}), 500

@@ -187,10 +187,15 @@ button:active { transform:scale(.97); }
 .order-qty { color:var(--accent); font-weight:600; flex-shrink:0; }
 .order-footer { display:flex; justify-content:flex-end; gap:8px; }
 .order-card.printing { border-color:rgba(245,166,35,.6); }
-.order-card.printed  { border-color:rgba(76,175,136,.5); }
+.order-card.printed  { border-color:rgba(76,175,136,.4); opacity:.65; }
+.order-card.printed:hover { opacity:1; }
 .order-card.error    { border-color:rgba(224,85,85,.4); }
 .order-card.flex-type   { border-left:3px solid #ffe600; }
 .order-card.correo-type { border-left:3px solid #5b9cf6; }
+.printed-divider {
+  font-size:.68rem; color:var(--text2); text-transform:uppercase; letter-spacing:.08em;
+  padding:6px 4px 2px; opacity:.5;
+}
 
 .badge-flex   { background:rgba(255,230,0,.15);   color:#ccb800; }
 .badge-correo { background:rgba(91,156,246,.15);  color:#5b9cf6; }
@@ -952,14 +957,22 @@ function renderOrdersArea(loading = false, errorMsg = null) {
       </div>`;
   }
 
-  if (flexOrders.length) {
-    content += `<div class="section-header flex-section">⚡ Envío Flex — ME2 (${flexOrders.length})</div>`;
-    flexOrders.forEach(o => { content += orderCardHtml(o, 'flex-type', 'badge-flex', '⚡ Flex'); });
+  function renderGroup(orders, typeClass, badgeClass, badgeLabel, headerHtml) {
+    if (!orders.length) return;
+    const pending  = orders.filter(o => !isPrinted(o.shipping?.id));
+    const printed  = orders.filter(o =>  isPrinted(o.shipping?.id));
+    const total    = orders.length;
+    const pendingN = pending.length;
+    content += `<div class="section-header ${typeClass.replace('-type','')}-section">${headerHtml} (${total}${pendingN < total ? ` · ${total - pendingN} ✓ impresos` : ''})</div>`;
+    pending.forEach(o => { content += orderCardHtml(o, typeClass, badgeClass, badgeLabel); });
+    if (printed.length) {
+      content += `<div class="printed-divider">✓ Ya impresos</div>`;
+      printed.forEach(o => { content += orderCardHtml(o, typeClass, badgeClass, badgeLabel); });
+    }
   }
-  if (correoOrders.length) {
-    content += `<div class="section-header correo-section">📮 Correo / Estándar (${correoOrders.length})</div>`;
-    correoOrders.forEach(o => { content += orderCardHtml(o, 'correo-type', 'badge-correo', '📮 Correo'); });
-  }
+
+  renderGroup(flexOrders,   'flex-type',   'badge-flex',   '⚡ Flex',   '⚡ Envío Flex — ME2');
+  renderGroup(correoOrders, 'correo-type', 'badge-correo', '📮 Correo', '📮 Correo / Estándar');
   if (shippedOrders.length) {
     content += `<div class="section-header" style="opacity:.6;border-color:#6495ed">🚚 Ya despachados hoy (${shippedOrders.length})</div>`;
     shippedOrders.forEach(o => {

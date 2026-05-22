@@ -931,12 +931,16 @@ def _build_detail_zpl(order_data, cfg):
     hsep(2)
 
     # ── Artículos: viñeta + word wrap automático ─────────────────────────────
-    fld_w = w - m - 22 - m   # ancho disponible después de la viñeta
-    cpl   = max(25, fld_w // 14)   # chars estimados por línea (ADN,34,17)
-    first = True
+    # Fuente condensada: ADN,24,10 (narrow). Cada línea ocupa 24+6=30 dots.
+    fld_w  = w - m - 22 - m
+    font_h = 24
+    font_w = 10
+    line_h = font_h + 6        # espacio real por línea dentro del bloque
+    cpl    = max(20, fld_w // 8)  # ~8 dots promedio por char con fuente narrow
+    first  = True
     for item in items:
-        if y > h - 55:
-            lines.append(f'^FO{m},{y}^ADN,22,11^FD... y mas articulos^FS')
+        if y > h - 60:
+            lines.append(f'^FO{m},{y}^ADN,20,9^FD... y mas articulos^FS')
             break
         if not first:
             hsep(1)
@@ -944,10 +948,10 @@ def _build_detail_zpl(order_data, cfg):
         qty   = item.get('qty', 1)
         title = _ascii_zpl(str(item.get('title', '')))
         label = f'x{qty}  {title}'
-        nlines = max(1, min(3, (len(label) + cpl - 1) // cpl))
-        lines.append(f'^FO{m},{y + 10}^GB14,14,14^FS')
-        lines.append(f'^FO{m + 22},{y}^ADN,34,17^FB{fld_w},{nlines},0,L,0^FD{label}^FS')
-        y += nlines * 44 + 5
+        nlines = max(1, min(4, (len(label) + cpl - 1) // cpl))
+        lines.append(f'^FO{m},{y + 8}^GB12,12,12^FS')
+        lines.append(f'^FO{m + 20},{y}^ADN,{font_h},{font_w}^FB{fld_w},{nlines},6,L,0^FD{label}^FS')
+        y += nlines * line_h + 12
 
     lines.append('^XZ')
     return ('\r\n'.join(lines) + '\r\n').encode('latin-1', errors='replace')

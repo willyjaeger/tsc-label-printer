@@ -792,6 +792,30 @@ function switchMlTab(tab) {
   else renderOrdersArea();
 }
 
+async function seedLocalOrdersFromCache() {
+  // Migra pedidos impresos del cache del browser a orders.json (una sola vez por pedido)
+  const cache = JSON.parse(localStorage.getItem(CACHE_KEY) || '{}');
+  const knownIds = new Set(localOrders.map(o => String(o.shipment_id)));
+  const toImport = Object.values(cache)
+    .filter(o => isPrinted(o.shipping?.id) && !knownIds.has(String(o.shipping?.id)));
+  if (!toImport.length) return;
+  try {
+    await fetch(API + '/local/import', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ orders: toImport.map(o => ({
+        order_id:      o.id,
+        shipment_id:   o.shipping?.id,
+        buyer:         o._shipment?.receiver_name || o.buyer?.nickname || '',
+        address:       [o._shipment?.street, o._shipment?.city, o._shipment?.state].filter(Boolean).join(', '),
+        logistic_type: o._shipment?.logistic_type || '',
+        items:         (o.order_items || []).map(i => ({ qty: i.quantity, title: i.item?.title || '' })),
+      })) }),
+    });
+    await loadLocalOrders();
+  } catch(e) {}
+}
+
 async function loadLocalOrders() {
   try {
     const r = await fetch(API + '/local/orders');
@@ -876,10 +900,9 @@ async function loadOrdersIfReady() {
     const d = await r.json();
     if (d.ok) {
       cacheOrders(d.orders);
-      const currentIds = new Set(d.orders.map(o => String(o.id)));
-      const cached = getCachedPrinted(currentIds);
-      ordersData = [...d.orders, ...cached];
+      ordersData = d.orders;
       renderOrdersArea();
+      seedLocalOrdersFromCache();   // migra pedidos viejos del browser a orders.json
     } else renderOrdersArea(false, d.error);
   } catch(e) {
     renderOrdersArea(false, e.message);
@@ -1020,7 +1043,7 @@ function renderOrdersArea(loading = false, errorMsg = null) {
     return;
   }
 
-  if (!ordersData.length) {
+  if (!visibleOrders.length) {
     content += `
       <div class="orders-toolbar">
         <span class="count">Sin pedidos pendientes</span>
@@ -1035,9 +1058,13 @@ function renderOrdersArea(loading = false, errorMsg = null) {
     return;
   }
 
-  const unprintedIds    = ordersData.map(o => o.shipping?.id).filter(id => id && !isPrinted(id));
-  const shippedOrders   = ordersData.filter(o => o._status_label === 'shipped');
-  const pendingOrders   = ordersData.filter(o => o._status_label !== 'shipped');
+  // Excluir pedidos que ya están trackeados en En camino (orders.json)
+  const enCaminoIds  = new Set(localOrders.map(o => String(o.shipment_id)));
+  const visibleOrders = ordersData.filter(o => !enCaminoIds.has(String(o.shipping?.id)));
+
+  const unprintedIds    = visibleOrders.map(o => o.shipping?.id).filter(id => id && !isPrinted(id));
+  const shippedOrders   = visibleOrders.filter(o => o._status_label === 'shipped');
+  const pendingOrders   = visibleOrders.filter(o => o._status_label !== 'shipped');
   const isFlexType      = t => t === 'me2' || t === 'xd_drop_off' || t === 'self_service';
   const isCorrType      = t => t === 'cross_docking';
 

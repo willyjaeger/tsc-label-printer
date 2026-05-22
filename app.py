@@ -1075,6 +1075,30 @@ def local_orders_endpoint():
     return jsonify({'ok': True, 'orders': load_orders()})
 
 
+@app.route('/local/import', methods=['POST'])
+def local_import():
+    """Importa pedidos impresos desde el cache del browser a orders.json (migración)."""
+    body   = request.get_json(silent=True) or {}
+    to_imp = body.get('orders', [])
+    existing_ids = {o['shipment_id'] for o in load_orders()}
+    added = 0
+    for o in to_imp:
+        sid = int(o.get('shipment_id', 0) or 0)
+        if not sid or sid in existing_ids:
+            continue
+        _save_printed_order({
+            'shipment_id':  str(sid),
+            'order_id':     str(o.get('order_id', 0) or 0),
+            'buyer':        o.get('buyer', ''),
+            'address':      o.get('address', ''),
+            'logistic_type': o.get('logistic_type', ''),
+            'items':        o.get('items', []),
+        })
+        existing_ids.add(sid)
+        added += 1
+    return jsonify({'ok': True, 'added': added})
+
+
 @app.route('/ml/debug-orders')
 def ml_debug_orders():
     token = get_valid_token()

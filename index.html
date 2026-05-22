@@ -219,7 +219,44 @@ button:active { transform:scale(.97); }
 .badge { display:inline-block; padding:2px 8px; border-radius:20px; font-size:.68rem; font-weight:700; }
 .badge-ok      { background:rgba(76,175,136,.15);  color:var(--ok);  }
 .badge-warn    { background:rgba(245,166,35,.15);  color:var(--warn); }
-.badge-shipped { background:rgba(100,149,237,.15); color:#6495ed; }
+.badge-shipped    { background:rgba(100,149,237,.15); color:#6495ed; }
+.badge-delivered  { background:rgba(76,175,136,.2);  color:var(--ok); }
+.badge-failed     { background:rgba(224,85,85,.15);  color:var(--err); }
+.badge-waiting    { background:rgba(245,166,35,.12); color:var(--warn); }
+
+/* ── Sub-tabs (Despachar / En camino) ── */
+.subtabs { display:flex; gap:4px; margin-bottom:14px; }
+.subtab-btn {
+  flex:1; padding:7px 10px; border:1px solid var(--border); border-radius:7px;
+  font-size:.82rem; font-weight:600; cursor:pointer;
+  color:var(--text2); background:var(--surf2); transition:all .15s;
+  display:flex; align-items:center; justify-content:center; gap:6px;
+}
+.subtab-btn:hover { color:var(--text); background:var(--surf3); }
+.subtab-btn.active { background:var(--surf3); color:var(--text); border-color:var(--accent); }
+.subtab-badge {
+  background:var(--accent); color:#111; border-radius:20px;
+  font-size:.65rem; font-weight:700; padding:1px 6px; min-width:18px; text-align:center;
+}
+
+/* ── En camino cards ── */
+.ec-card {
+  background:var(--surf2); border:1px solid var(--border); border-radius:9px;
+  padding:14px 16px; display:flex; flex-direction:column; gap:8px;
+}
+.ec-card.status-shipped  { border-left:3px solid #6495ed; }
+.ec-card.status-delivered { border-left:3px solid var(--ok); opacity:.7; }
+.ec-card.status-failed   { border-left:3px solid var(--err); }
+.ec-card.status-waiting  { border-left:3px solid var(--warn); }
+.ec-head { display:flex; justify-content:space-between; align-items:center; gap:8px; }
+.ec-corr { font-size:1.1rem; font-weight:800; color:var(--accent); font-family:monospace; }
+.ec-buyer { font-size:.92rem; font-weight:600; }
+.ec-addr  { font-size:.78rem; color:var(--text2); }
+.ec-items { display:flex; flex-direction:column; gap:3px; margin-top:2px; }
+.ec-item  { font-size:.78rem; color:var(--text2); }
+.ec-item span { color:var(--accent); font-weight:600; margin-right:5px; }
+.ec-foot  { display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:6px; margin-top:2px; }
+.ec-date  { font-size:.68rem; color:var(--text2); }
 
 footer { text-align:center; font-size:.7rem; color:var(--text2); margin-top:20px; opacity:.4; }
 
@@ -487,6 +524,7 @@ async function init() {
   await checkAuthStatus();
   await checkTNAuthStatus();
   loadOrdersIfReady();
+  loadLocalOrders();
 }
 
 // ── Tabs ──────────────────────────────────────────────
@@ -748,6 +786,87 @@ function loginWithML() {
 }
 
 // ── Orders ────────────────────────────────────────────
+function switchMlTab(tab) {
+  mlTab = tab;
+  if (tab === 'en_camino' && !localOrders.length) loadLocalOrders();
+  else renderOrdersArea();
+}
+
+async function loadLocalOrders() {
+  try {
+    const r = await fetch(API + '/local/orders');
+    const d = await r.json();
+    if (d.ok) localOrders = d.orders || [];
+  } catch(e) {}
+  renderOrdersArea();
+}
+
+function ecStatusInfo(status, substatus) {
+  if (status === 'delivered')     return { label: '✓ Entregado',        cls: 'badge-delivered', card: 'status-delivered' };
+  if (status === 'not_delivered') return { label: '✗ No entregado',     cls: 'badge-failed',    card: 'status-failed'    };
+  if (status === 'shipped')       return { label: '🛵 En reparto',       cls: 'badge-shipped',   card: 'status-shipped'   };
+  if (status === 'handling')      return { label: '📦 En preparación',   cls: 'badge-warn',      card: 'status-waiting'   };
+  if (status === 'ready_to_ship') return { label: '⏳ Listo para retiro', cls: 'badge-warn',      card: 'status-waiting'   };
+  return                                 { label: '🖨️ Impreso',           cls: 'badge-warn',      card: 'status-waiting'   };
+}
+
+function renderEnCaminoArea(content) {
+  const enCamino = localOrders.slice().sort((a, b) => {
+    const order = ['shipped','handling','ready_to_ship','printed','delivered','not_delivered'];
+    return (order.indexOf(a.shipment_status) - order.indexOf(b.shipment_status));
+  });
+
+  if (!enCamino.length) {
+    content += `<div class="card empty-state">
+      <div class="empty-icon">🛵</div>
+      <div class="empty-title">Sin envíos en camino</div>
+      <div class="empty-sub">Los pedidos aparecen acá después de imprimir la etiqueta</div>
+    </div>`;
+    return content;
+  }
+
+  content += `<div class="orders-list">`;
+  for (const o of enCamino) {
+    const si   = ecStatusInfo(o.shipment_status, o.shipment_substatus);
+    const corr = o.correlative != null ? `#${String(o.correlative).padStart(3,'0')}` : '';
+    const date = o.printed_at ? new Date(o.printed_at).toLocaleString('es-AR',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}) : '';
+    const chk  = o.status_checked_at ? new Date(o.status_checked_at).toLocaleString('es-AR',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}) : 'sin verificar';
+    const items = (o.items || []).map(i =>
+      `<div class="ec-item"><span>×${i.qty}</span>${i.title}</div>`
+    ).join('');
+    content += `
+      <div class="ec-card ${si.card}">
+        <div class="ec-head">
+          <span class="ec-corr">${corr}</span>
+          <span class="badge ${si.cls}">${si.label}</span>
+          <button class="btn-s btn-sm" style="margin-left:auto" onclick="reprintFromLocal(${o.shipment_id}, this)">↺</button>
+        </div>
+        <div class="ec-buyer">${o.buyer || '—'}</div>
+        ${o.address ? `<div class="ec-addr">📍 ${o.address}</div>` : ''}
+        <div class="ec-items">${items}</div>
+        <div class="ec-foot">
+          <span class="ec-date">Impreso: ${date}</span>
+          <span class="ec-date">Estado: ${chk}</span>
+        </div>
+      </div>`;
+  }
+  content += `</div>`;
+  return content;
+}
+
+async function reprintFromLocal(shipmentId, btn) {
+  const orig = btn.textContent;
+  btn.disabled = true; btn.textContent = '⏳';
+  try {
+    const r = await fetch(`${API}/ml/print/${shipmentId}`, {
+      method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({}),
+    });
+    const d = await r.json();
+    d.ok ? toast(`✓ Reimpreso envío ${shipmentId}`, 'ok') : toast('✗ ' + d.error, 'err');
+  } catch(e) { toast('✗ ' + e.message, 'err'); }
+  btn.disabled = false; btn.textContent = orig;
+}
+
 async function loadOrdersIfReady() {
   if (!mlUser) return;
   renderOrdersArea(true); // mostrar loading
@@ -774,9 +893,11 @@ async function printOrder(shipmentId, cardEl, reprint) {
 
   const order = ordersData.find(o => o.shipping?.id == shipmentId);
   const detail = order ? {
-    order_id: order.id,
-    buyer:    order._shipment?.receiver_name || order.buyer?.nickname || '',
-    items:    (order.order_items || []).map(i => ({ qty: i.quantity, title: i.item?.title || '' })),
+    order_id:     order.id,
+    buyer:        order._shipment?.receiver_name || order.buyer?.nickname || '',
+    address:      [order._shipment?.street, order._shipment?.city, order._shipment?.state].filter(Boolean).join(', '),
+    logistic_type: order._shipment?.logistic_type || '',
+    items:        (order.order_items || []).map(i => ({ qty: i.quantity, title: i.item?.title || '' })),
   } : {};
 
   try {
@@ -814,10 +935,12 @@ async function printAll() {
   const orders = ordersData
     .filter(o => o.shipping?.id && !isPrinted(o.shipping.id))
     .map(o => ({
-      shipment_id: o.shipping.id,
-      order_id:    o.id,
-      buyer:       o._shipment?.receiver_name || o.buyer?.nickname || '',
-      items:       (o.order_items || []).map(i => ({ qty: i.quantity, title: i.item?.title || '' })),
+      shipment_id:   o.shipping.id,
+      order_id:      o.id,
+      buyer:         o._shipment?.receiver_name || o.buyer?.nickname || '',
+      address:       [o._shipment?.street, o._shipment?.city, o._shipment?.state].filter(Boolean).join(', '),
+      logistic_type: o._shipment?.logistic_type || '',
+      items:         (o.order_items || []).map(i => ({ qty: i.quantity, title: i.item?.title || '' })),
     }));
   if (!orders.length) return;
   if (!confirm(`Imprimir ${orders.length} etiqueta(s) con detalle?\n\nSalen en pares: etiqueta de envío + detalle de artículos.`)) return;
@@ -860,6 +983,7 @@ function renderOrdersArea(loading = false, errorMsg = null) {
 
   const nick = mlUser.nickname ?? `Usuario #${mlUser.user_id}`;
 
+  const ecCount = localOrders.length;
   let content = `
     <div class="ml-status">
       <div>
@@ -868,8 +992,22 @@ function renderOrdersArea(loading = false, errorMsg = null) {
       </div>
       <div class="spacer"></div>
       <button class="btn-d btn-sm" onclick="mlLogout()">Desconectar</button>
+    </div>
+    <div class="subtabs">
+      <button class="subtab-btn ${mlTab==='despachar'?'active':''}" onclick="switchMlTab('despachar')">📋 Despachar</button>
+      <button class="subtab-btn ${mlTab==='en_camino'?'active':''}" onclick="switchMlTab('en_camino')">
+        🛵 En camino${ecCount ? `<span class="subtab-badge" id="enCaminoBadge">${ecCount}</span>` : `<span id="enCaminoBadge"></span>`}
+      </button>
     </div>`;
 
+  // ── Pestaña En camino ──────────────────────────────────────────────────────
+  if (mlTab === 'en_camino') {
+    content = renderEnCaminoArea(content);
+    area.innerHTML = content;
+    return;
+  }
+
+  // ── Pestaña Despachar ──────────────────────────────────────────────────────
   if (loading) {
     content += `<div class="card empty-state"><div><span class="spinner"></span> Cargando pedidos…</div></div>`;
     area.innerHTML = content;
@@ -1002,6 +1140,8 @@ function timeAgo(dateStr) {
 
 // ── SSE / Auto-print ──────────────────────────────────────────────────────────
 let sseSource     = null;
+let mlTab         = 'despachar';   // 'despachar' | 'en_camino'
+let localOrders   = [];            // desde orders.json vía /local/orders
 let apEnabled     = false;
 let apInterval    = 60;
 let apStatus      = 'idle';     // 'idle' | 'running' | 'error'
@@ -1057,6 +1197,15 @@ function connectSSE() {
   sseSource.addEventListener('print_error', e => {
     const d = JSON.parse(e.data);
     console.warn('Auto-print error — envío', d.shipment_id, ':', d.error);
+  });
+
+  sseSource.addEventListener('orders_sync', e => {
+    const d = JSON.parse(e.data);
+    localOrders = d.orders || [];
+    if (mlTab === 'en_camino') renderOrdersArea();
+    // Actualizar badge del sub-tab aunque no estemos en esa pestaña
+    const badge = document.getElementById('enCaminoBadge');
+    if (badge) badge.textContent = localOrders.length || '';
   });
 
   sseSource.onerror = () => {

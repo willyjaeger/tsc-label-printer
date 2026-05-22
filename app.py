@@ -28,6 +28,7 @@ else:
     CONFIG_DIR = BUNDLE_DIR
 
 CONFIG_FILE = os.path.join(CONFIG_DIR, 'config.json')
+ORDERS_FILE = os.path.join(CONFIG_DIR, 'orders.json')
 
 DEFAULT_CONFIG = {
     'ip': '192.168.1.100',
@@ -102,6 +103,110 @@ def load_config():
 def save_config(cfg):
     with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
         json.dump(cfg, f, indent=2)
+
+
+# ── Orders persistence ─────────────────────────────────────────────────────────
+
+def load_orders():
+    if os.path.exists(ORDERS_FILE):
+        try:
+            with open(ORDERS_FILE, encoding='utf-8') as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return []
+
+def save_orders(orders):
+    with open(ORDERS_FILE, 'w', encoding='utf-8') as f:
+        json.dump(orders, f, indent=2, ensure_ascii=False)
+
+def _save_printed_order(order_data):
+    """Registra un pedido impreso en orders.json. Si ya existe, actualiza correlativo y fecha."""
+    from datetime import datetime, timezone, timedelta
+    tz = timezone(timedelta(hours=-3))
+    now = datetime.now(tz).isoformat()
+
+    shipment_id = int(order_data.get('shipment_id', 0) or 0)
+    if not shipment_id:
+        return
+
+    orders = load_orders()
+    for o in orders:
+        if o.get('shipment_id') == shipment_id:
+            o['correlative'] = order_data.get('correlative', o.get('correlative'))
+            o['printed_at']  = now
+            save_orders(orders)
+            return
+
+    orders.append({
+        'id':                 int(order_data.get('order_id', 0) or 0),
+        'shipment_id':        shipment_id,
+        'correlative':        order_data.get('correlative'),
+        'buyer':              order_data.get('buyer', ''),
+        'address':            order_data.get('address', ''),
+        'items':              order_data.get('items', []),
+        'logistic_type':      order_data.get('logistic_type', ''),
+        'printed_at':         now,
+        'shipment_status':    'printed',
+        'shipment_substatus': '',
+        'status_checked_at':  None,
+        'delivered_at':       None,
+    })
+    save_orders(orders)
+
+def _sync_orders_in_transit(token):
+    """Consulta ML para actualizar estados de envío. Purga entregados tras 24h. Devuelve lista."""
+    from datetime import datetime, timezone, timedelta
+    tz  = timezone(timedelta(hours=-3))
+    now = datetime.now(tz)
+    now_iso = now.isoformat()
+
+    orders = load_orders()
+    if not orders:
+        return []
+
+    changed = False
+
+    # Purgar delivered/not_delivered con más de 24 h
+    keep = []
+    for o in orders:
+        if o.get('shipment_status') in ('delivered', 'not_delivered') and o.get('delivered_at'):
+            try:
+                dt = datetime.fromisoformat(o['delivered_at'])
+                if (now - dt).total_seconds() > 86400:
+                    changed = True
+                    continue
+            except Exception:
+                pass
+        keep.append(o)
+    orders = keep
+
+    # Actualizar estados pendientes
+    for o in orders:
+        if o.get('shipment_status') in ('delivered', 'not_delivered'):
+            continue
+        sid = o.get('shipment_id')
+        if not sid:
+            continue
+        try:
+            r   = ml_get(f'/shipments/{sid}', token)
+            d   = r.json()
+            new_status    = d.get('status', '') or ''
+            new_substatus = d.get('substatus', '') or ''
+            if new_status != o.get('shipment_status', '') or new_substatus != o.get('shipment_substatus', ''):
+                o['shipment_status']    = new_status
+                o['shipment_substatus'] = new_substatus
+                o['status_checked_at']  = now_iso
+                if new_status in ('delivered', 'not_delivered'):
+                    o['delivered_at'] = now_iso
+                changed = True
+        except Exception:
+            pass
+
+    if changed:
+        save_orders(orders)
+
+    return orders
 
 
 # ── Printer ────────────────────────────────────────────────────────────────────
@@ -377,6 +482,7 @@ def _poll_worker():
                         payload = (_inject_correlative_into_zpl(zpl, corr)
                                    + _build_detail_zpl(order_data, cfg))
                         send_to_printer(cfg['ip'], cfg['port'], payload)
+                        _save_printed_order(order_data)
                         _push_event('auto_printed', {
                             'shipment_id': sid,
                             'order_id':    o['id'],
@@ -392,6 +498,13 @@ def _poll_worker():
                 _push_event('poll_status', {
                     'status': 'idle', 'checked_at': now, 'count': len(printable),
                 })
+
+            # Actualizar estados de envíos en tránsito
+            try:
+                updated = _sync_orders_in_transit(token)
+                _push_event('orders_sync', {'orders': updated})
+            except Exception:
+                pass
 
         except Exception as e:
             now = time.time()
@@ -957,6 +1070,11 @@ def _build_detail_zpl(order_data, cfg):
     return ('\r\n'.join(lines) + '\r\n').encode('latin-1', errors='replace')
 
 
+@app.route('/local/orders')
+def local_orders_endpoint():
+    return jsonify({'ok': True, 'orders': load_orders()})
+
+
 @app.route('/ml/debug-orders')
 def ml_debug_orders():
     token = get_valid_token()
@@ -1044,6 +1162,7 @@ def ml_print(shipment_id):
 
         n_labels = count_labels(payload)
         send_to_printer(cfg['ip'], cfg['port'], payload)
+        _save_printed_order(order_data)
         return jsonify({'ok': True, 'labels': n_labels})
     except socket.timeout:
         return jsonify({'ok': False, 'error': f"Timeout de impresora: {cfg['ip']}:{cfg['port']}"}), 500
@@ -1089,6 +1208,7 @@ def ml_print_all():
                 combined += _inject_correlative_into_zpl(zpl, corr) + _build_detail_zpl(order, cfg)
             else:
                 combined += zpl
+            _save_printed_order(order)
         except Exception:
             failed.append(str(sid))
 

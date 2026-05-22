@@ -900,7 +900,7 @@ function renderOrdersArea(loading = false, errorMsg = null) {
   const unprintedIds    = ordersData.map(o => o.shipping?.id).filter(id => id && !isPrinted(id));
   const shippedOrders   = ordersData.filter(o => o._status_label === 'shipped');
   const pendingOrders   = ordersData.filter(o => o._status_label !== 'shipped');
-  const isFlexType      = t => t === 'me2' || t === 'xd_drop_off';
+  const isFlexType      = t => t === 'me2' || t === 'xd_drop_off' || t === 'self_service';
   const isCorrType      = t => t === 'cross_docking';
 
   const flexOrders   = pendingOrders.filter(o => isFlexType(o._shipment?.logistic_type));
@@ -971,8 +971,14 @@ function renderOrdersArea(loading = false, errorMsg = null) {
     }
   }
 
+  const otherOrders = pendingOrders.filter(o => {
+    const lt = o._shipment?.logistic_type;
+    return !isFlexType(lt) && !isCorrType(lt);
+  });
+
   renderGroup(flexOrders,   'flex-type',   'badge-flex',   '⚡ Flex',   '⚡ Envío Flex — ME2');
   renderGroup(correoOrders, 'correo-type', 'badge-correo', '📮 Correo', '📮 Correo / Estándar');
+  renderGroup(otherOrders,  'flex-type',   'badge-flex',   '📦 Envío',  '📦 Otros envíos');
   if (shippedOrders.length) {
     content += `<div class="section-header" style="opacity:.6;border-color:#6495ed">🚚 Ya despachados hoy (${shippedOrders.length})</div>`;
     shippedOrders.forEach(o => {

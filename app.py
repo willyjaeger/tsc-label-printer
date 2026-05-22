@@ -971,9 +971,22 @@ def ml_debug_orders():
             'sort': 'date_desc', 'limit': 5,
         })
         data = r.json()
+        orders = data.get('results', [])
+        # Enriquecer con logistic_type del envío
+        enriched = []
+        for o in orders[:5]:
+            sid = o.get('shipping', {}).get('id')
+            lt = None
+            if sid:
+                try:
+                    sr = ml_get(f'/shipments/{sid}', token)
+                    lt = sr.json().get('logistic_type')
+                except Exception:
+                    pass
+            enriched.append({'id': o['id'], 'last_updated': o.get('last_updated'), 'logistic_type': lt})
         results[status] = {
             'count': data.get('paging', {}).get('total', '?'),
-            'sample': [{'id': o['id'], 'date_closed': o.get('date_closed'), 'last_updated': o.get('last_updated')} for o in data.get('results', [])[:3]],
+            'orders': enriched,
         }
     return jsonify(results)
 

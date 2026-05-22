@@ -426,9 +426,15 @@ def calibrate():
 def autocal():
     cfg = load_config()
     try:
-        # ~JC = Calibrate media (detecta gap avanzando etiquetas)
-        # ~JA sería "Cancel All" — no es calibración
+        dpi        = int(cfg.get('dpi', 203))
+        height_mm  = float(cfg.get('label_height_mm', 150))
+        height_dots = round(height_mm * dpi / 25.4)
+        # ~JC detecta gap avanzando ~3 etiquetas; luego retrocedemos esa misma distancia
+        backfeed_dots = height_dots * 3
+        import time
         send_to_printer(cfg['ip'], cfg['port'], '~JC')
+        time.sleep(4)  # esperar que la impresora termine la calibración
+        send_to_printer(cfg['ip'], cfg['port'], f'BACKFEED {backfeed_dots}\r\n'.encode())
         return jsonify({'ok': True})
     except socket.timeout:
         return jsonify({'ok': False, 'error': f"Timeout: no se pudo conectar a {cfg['ip']}:{cfg['port']}"}), 500

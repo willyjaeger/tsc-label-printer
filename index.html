@@ -294,38 +294,12 @@ footer { text-align:center; font-size:.7rem; color:var(--text2); margin-top:20px
     </button>
     <div class="collapsible" id="calBody">
       <div class="col-body">
-        <div class="cal-grid">
-          <div>
-            <label>Tipo de media</label>
-            <select id="mediaType">
-              <option value="gap">Gap (etiquetas ML)</option>
-              <option value="mark">Marca negra</option>
-              <option value="continuous">Continuo</option>
-            </select>
-          </div>
-          <div>
-            <label>Resolución</label>
-            <select id="dpi"><option value="203">203 dpi</option><option value="300">300 dpi</option></select>
-          </div>
-          <div>
-            <label>Alto etiqueta (mm)</label>
-            <input type="number" id="labelHeight" value="150" min="10" max="400">
-            <div class="hint">ML Argentina: 150mm estándar</div>
-          </div>
-          <div>
-            <label>Backfeed offset (dots)</label>
-            <input type="number" id="backfeedDots" value="0" min="-120" max="120">
-            <div class="hint">Ajuste fino posición vertical</div>
-          </div>
-          <div><label>Ancho (mm)</label><input type="number" id="labelWidth" value="100" min="10" max="250"></div>
-        </div>
         <div class="cal-actions">
-          <button class="btn-p btn-sm" onclick="applyCalibration()">Aplicar calibración</button>
           <button class="btn-s btn-sm" onclick="testPrint()">Imprimir test</button>
           <button class="btn-d btn-sm" onclick="runAutoCal(this)">Auto-calibrar (~JC) ⚠️</button>
         </div>
         <div class="hint" style="margin-top:10px;padding:9px 11px;background:rgba(224,85,85,.07);border-radius:6px;border-left:2px solid rgba(224,85,85,.3)">
-          ⚠️ Auto-calibrar avanza varias etiquetas para detectar el gap. Usar solo si la alineación está muy desviada.
+          ⚠️ Auto-calibrar avanza etiquetas para detectar el gap y luego retrocede el papel automáticamente.
         </div>
 
         <!-- ── Retroceder papel ── -->
@@ -336,9 +310,8 @@ footer { text-align:center; font-size:.7rem; color:var(--text2); margin-top:20px
           </div>
           <div class="row">
             <div class="f1">
-              <label>Dots a retroceder</label>
-              <input type="number" id="retractDots" placeholder="ej. 1200" min="1" max="9999">
-              <div class="hint" id="retractHint">≈ — mm · calculado automático tras imprimir</div>
+              <label>Cantidad de etiquetas a retroceder</label>
+              <input type="number" id="retractLabels" placeholder="ej. 2" min="1" max="20">
             </div>
             <div><label>&nbsp;</label>
               <button class="btn-s btn-sm" onclick="doRetractManual(this)">↩ Retroceder</button>
@@ -437,13 +410,10 @@ async function init() {
     const c = await r.json();
     document.getElementById('printerIp').value    = c.ip            ?? '192.168.1.100';
     document.getElementById('printerPort').value  = c.port          ?? 9100;
-    document.getElementById('mediaType').value    = c.media_type    ?? 'gap';
-    document.getElementById('dpi').value          = c.dpi           ?? 203;
-    document.getElementById('labelHeight').value  = c.label_height_mm ?? 150;
-    document.getElementById('labelWidth').value   = c.label_width_mm  ?? 100;
-    document.getElementById('backfeedDots').value = c.backfeed_dots ?? 0;
     document.getElementById('mlClientId').value     = c.ml_client_id     ?? '';
     document.getElementById('mlClientSecret').value = c.ml_client_secret ?? '';
+    cfgDpi           = c.dpi             ?? 203;
+    cfgLabelHeightMm = c.label_height_mm ?? 150;
   } catch(e) {
     console.warn('config load error', e);
   }
@@ -503,31 +473,25 @@ function flashPill(id) {
 
 // ── Retroceder papel ─────────────────────────────────
 let lastPrintLabels = 0;
+let cfgDpi         = 203;
+let cfgLabelHeightMm = 150;
 
 function calcRetractDots(nLabels) {
-  const dpi = parseInt(document.getElementById('dpi').value) || 203;
-  const hmm = parseFloat(document.getElementById('labelHeight').value) || 150;
-  return Math.round(nLabels * hmm * dpi / 25.4);
+  return Math.round(nLabels * cfgLabelHeightMm * cfgDpi / 25.4);
 }
 
 function offerRetract(nLabels) {
   if (nLabels <= 0) return;
   lastPrintLabels = nLabels;
-  const dots = calcRetractDots(nLabels);
-  const dpi  = parseInt(document.getElementById('dpi').value) || 203;
-  const hmm  = parseFloat(document.getElementById('labelHeight').value) || 150;
-  const mm   = Math.round(nLabels * hmm);
-
-  // Actualizar input manual con el valor sugerido
-  document.getElementById('retractDots').value = dots;
-  document.getElementById('retractHint').textContent =
-    `≈ ${mm} mm (${nLabels} etiq × ${Math.round(hmm * dpi / 25.4)} dots)`;
 
   // Botón rápido "última impresión"
   const wrap = document.getElementById('retractLastWrap');
   const btn  = document.getElementById('retractLastBtn');
-  btn.textContent = `↩ Retroceder última impresión: ${nLabels} etiq. × ${Math.round(hmm * dpi / 25.4)} dots = ${dots} dots`;
+  btn.textContent = `↩ Retroceder última impresión (${nLabels} etiq.)`;
   wrap.style.display = 'block';
+
+  // Sugerir en el input manual
+  document.getElementById('retractLabels').value = nLabels;
 
   // Abrir la sección de calibración si estaba cerrada
   const calBody = document.getElementById('calBody');
@@ -538,21 +502,21 @@ function offerRetract(nLabels) {
 }
 
 async function doRetractLast(btn) {
-  const dots = calcRetractDots(lastPrintLabels);
-  await sendRetract(dots, btn);
+  await sendRetract(lastPrintLabels, btn);
 }
 
 async function doRetractManual(btn) {
-  const dots = parseInt(document.getElementById('retractDots').value);
-  if (!dots || dots <= 0) { toast('Ingresá la cantidad de dots', 'warn'); return; }
-  await sendRetract(dots, btn);
+  const n = parseInt(document.getElementById('retractLabels').value);
+  if (!n || n <= 0) { toast('Ingresá la cantidad de etiquetas', 'warn'); return; }
+  await sendRetract(n, btn);
 }
 
-async function sendRetract(dots, btn) {
+async function sendRetract(nLabels, btn) {
+  const dots = calcRetractDots(nLabels);
   const orig = btn.textContent;
   btn.disabled = true;
   btn.textContent = '⏳ Retrocediendo…';
-  setCalStatus('loading', `Retrocediendo ${dots} dots…`);
+  setCalStatus('loading', `Retrocediendo ${nLabels} etiq. (${dots} dots)…`);
   try {
     const r = await fetch(API + '/retract', {
       method: 'POST',
@@ -561,8 +525,8 @@ async function sendRetract(dots, btn) {
     });
     const d = await r.json();
     if (d.ok) {
-      setCalStatus('ok', `✓ Papel retrocedido ${dots} dots`);
-      toast(`✓ Papel retrocedido ${dots} dots`, 'ok');
+      setCalStatus('ok', `✓ Papel retrocedido ${nLabels} etiq. (${dots} dots)`);
+      toast(`✓ Retrocedido ${nLabels} etiq.`, 'ok');
     } else {
       setCalStatus('err', '✗ ' + d.error);
       toast('✗ ' + d.error, 'err');

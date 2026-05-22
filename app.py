@@ -35,10 +35,13 @@ DEFAULT_CONFIG = {
     'label_height_mm': 150,
     'label_width_mm': 100,
     'backfeed_dots': 0,
+    'label_gap_mm': 10,
     'media_type': 'gap',
     'dpi': 203,
     'ml_client_id': '',
     'ml_client_secret': '',
+    'tn_client_id': '',
+    'tn_client_secret': '',
 }
 
 ML_AUTH_URL  = 'https://auth.mercadolibre.com.ar/authorization'
@@ -48,6 +51,15 @@ REDIRECT_URI = 'https://willyjaeger.github.io/tsc-label-printer/callback.html'
 
 # PKCE: almacena {state: code_verifier} durante el flujo OAuth (en memoria, vida corta)
 _pkce_store = {}
+
+# ── TiendaNube constants ───────────────────────────────────────────────────────
+TN_API_BASE     = 'https://api.tiendanube.com/v1'
+TN_TOKEN_URL    = 'https://www.tiendanube.com/apps/authorize/token'
+TN_CIRRUS       = 'https://cirrus.tiendanube.com/nuvem-envio/dispatches'
+TN_REDIRECT_URI = 'https://willyjaeger.github.io/tsc-label-printer/tn-callback.html'
+TN_USER_AGENT   = 'TSC-Label-Printer/1.0 (guillermo.jaeger@gmail.com)'
+
+_tn_state_store = {}   # state → True, para CSRF
 
 # ── SSE / Auto-print state ──────────────────────────────────────────────────────
 _sse_clients      = []           # una Queue por cada cliente SSE conectado
@@ -104,6 +116,65 @@ def send_to_printer(ip, port, data):
         s.sendall(data)
     finally:
         s.close()
+
+
+def query_printer(ip, port, cmd, read_bytes=512, timeout=5):
+    """Envía un comando y lee la respuesta del printer. Devuelve bytes o None."""
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s.settimeout(timeout)
+    try:
+        s.connect((ip, int(port)))
+        if isinstance(cmd, str):
+            cmd = cmd.encode('utf-8')
+        s.sendall(cmd)
+        s.settimeout(2)
+        chunks = []
+        try:
+            while True:
+                chunk = s.recv(read_bytes)
+                if not chunk:
+                    break
+                chunks.append(chunk)
+        except socket.timeout:
+            pass
+        return b''.join(chunks) if chunks else None
+    except Exception:
+        return None
+    finally:
+        s.close()
+
+
+def parse_hs_gap(hs_response):
+    """
+    Parsea la respuesta ~HS del TSC para extraer el gap detectado.
+    El ~HS devuelve 3 paquetes STX...ETX. El gap está en el segundo paquete,
+    bytes 8-9 (little-endian, en dots de 1/100 pulgada).
+    Devuelve gap en mm o None si no se puede parsear.
+    """
+    if not hs_response or len(hs_response) < 20:
+        return None
+    try:
+        # Buscar paquetes delimitados por STX (0x02) / ETX (0x03)
+        packets = []
+        i = 0
+        while i < len(hs_response):
+            if hs_response[i] == 0x02:
+                end = hs_response.find(0x03, i + 1)
+                if end != -1:
+                    packets.append(hs_response[i+1:end])
+                    i = end + 1
+                    continue
+            i += 1
+        if len(packets) >= 2:
+            pkt = packets[1]  # segundo paquete contiene dimensiones
+            if len(pkt) >= 10:
+                gap_hundredths = int.from_bytes(pkt[8:10], 'little')
+                gap_mm = gap_hundredths * 25.4 / 100
+                if 1.0 <= gap_mm <= 30.0:  # rango razonable
+                    return round(gap_mm, 1)
+    except Exception:
+        pass
+    return None
 
 
 # ── ML Auth helpers ────────────────────────────────────────────────────────────
@@ -351,8 +422,9 @@ def index():
 @app.route('/config', methods=['GET'])
 def get_config():
     cfg = load_config()
-    # No exponer tokens al frontend
-    safe = {k: v for k, v in cfg.items() if not k.startswith('ml_access') and not k.startswith('ml_refresh') and not k.startswith('ml_token_exp')}
+    # No exponer tokens ni campos internos al frontend
+    _hidden = {'ml_access_token', 'ml_refresh_token', 'ml_token_expires_at', 'tn_access_token', 'tn_store_id'}
+    safe = {k: v for k, v in cfg.items() if k not in _hidden and not k.startswith('_')}
     return jsonify(safe)
 
 
@@ -426,16 +498,30 @@ def calibrate():
 def autocal():
     cfg = load_config()
     try:
-        dpi        = int(cfg.get('dpi', 203))
-        height_mm  = float(cfg.get('label_height_mm', 150))
+        dpi         = int(cfg.get('dpi', 203))
+        height_mm   = float(cfg.get('label_height_mm', 150))
         height_dots = round(height_mm * dpi / 25.4)
-        # ~JC detecta gap avanzando ~3 etiquetas; luego retrocedemos esa misma distancia
-        backfeed_dots = height_dots * 3
-        import time
+
         send_to_printer(cfg['ip'], cfg['port'], '~JC')
-        time.sleep(4)  # esperar que la impresora termine la calibración
+        time.sleep(5)  # esperar que la impresora termine la calibración
+
+        # Intentar leer el gap real con ~HS
+        hs = query_printer(cfg['ip'], cfg['port'], '~HS', read_bytes=64, timeout=3)
+        gap_mm = parse_hs_gap(hs)
+        if gap_mm is None:
+            gap_mm = float(cfg.get('label_gap_mm', 10))
+            gap_source = 'config'
+        else:
+            gap_source = f'medido ({gap_mm} mm)'
+            # Guardar el gap detectado para futuros backfeeds
+            cfg['label_gap_mm'] = gap_mm
+            save_config(cfg)
+
+        gap_dots      = round(gap_mm * dpi / 25.4)
+        # ~JC avanza ~3 pitches (etiqueta + gap); retrocedemos esa misma distancia
+        backfeed_dots = (height_dots + gap_dots) * 3
         send_to_printer(cfg['ip'], cfg['port'], f'BACKFEED {backfeed_dots}\r\n'.encode())
-        return jsonify({'ok': True})
+        return jsonify({'ok': True, 'gap_mm': gap_mm, 'gap_source': gap_source, 'backfeed_dots': backfeed_dots})
     except socket.timeout:
         return jsonify({'ok': False, 'error': f"Timeout: no se pudo conectar a {cfg['ip']}:{cfg['port']}"}), 500
     except ConnectionRefusedError:
@@ -677,6 +763,91 @@ def count_labels(data: bytes) -> int:
     return max(1, len(_re.findall(rb'\^XA', data, _re.IGNORECASE)))
 
 
+def pdf_to_zpl(pdf_bytes: bytes, width_mm: float = 100.0,
+               height_mm: float = 150.0, dpi: int = 203) -> bytes:
+    """Convierte la primera página de un PDF a ZPL ^GFA listo para imprimir.
+    Requiere pymupdf (fitz) y Pillow."""
+    try:
+        import fitz  # pymupdf
+    except ImportError:
+        raise RuntimeError('pymupdf no instalado. Ejecutar: pip install pymupdf')
+    try:
+        from PIL import Image
+        import io as _io
+    except ImportError:
+        raise RuntimeError('Pillow no instalado. Ejecutar: pip install Pillow')
+
+    target_w = max(1, int(width_mm  / 25.4 * dpi))
+    target_h = max(1, int(height_mm / 25.4 * dpi))
+
+    # Abrir PDF
+    try:
+        doc = fitz.open(stream=pdf_bytes, filetype='pdf')
+    except Exception as e:
+        raise RuntimeError(f'No se pudo abrir el PDF: {e}')
+    if doc.page_count == 0:
+        raise RuntimeError('El PDF está vacío (0 páginas)')
+
+    page = doc[0]
+    rect = page.rect  # en puntos (1 pt = 1/72 inch)
+
+    # Renderizar con alta resolución y luego reescalar
+    render_scale = max(dpi, 300) / 72.0
+    mat = fitz.Matrix(render_scale, render_scale)
+    pix = page.get_pixmap(matrix=mat, colorspace=fitz.csGRAY)
+    img = Image.frombytes('L', (pix.width, pix.height), pix.samples)
+
+    # Escalar preservando relación de aspecto → centrar en canvas blanco
+    scale  = min(target_w / img.width, target_h / img.height)
+    new_w  = max(1, int(img.width  * scale))
+    new_h  = max(1, int(img.height * scale))
+    img    = img.resize((new_w, new_h), Image.LANCZOS)
+    canvas = Image.new('L', (target_w, target_h), 255)
+    canvas.paste(img, ((target_w - new_w) // 2, (target_h - new_h) // 2))
+
+    bytes_per_row = (target_w + 7) // 8
+    total_bytes   = bytes_per_row * target_h
+
+    # Intentar conversión rápida vía numpy
+    try:
+        import numpy as np
+        arr  = np.asarray(canvas, dtype=np.uint8)           # (H, W)
+        dark = (arr < 128).astype(np.uint8)                 # 1=imprimir, 0=blanco
+        # Pad al multiplo de byte
+        pad_w = bytes_per_row * 8
+        if pad_w > target_w:
+            dark = np.pad(dark, ((0, 0), (0, pad_w - target_w)))
+        w8 = np.array([128, 64, 32, 16, 8, 4, 2, 1], dtype=np.uint16)
+        packed = dark.reshape(target_h, bytes_per_row, 8)
+        bitmap = (packed * w8).sum(axis=2).astype(np.uint8).tobytes()
+    except ImportError:
+        # Fallback PIL: convert('1') + XOR
+        try:
+            dith = Image.Dither.NONE
+        except AttributeError:
+            dith = Image.NONE  # Pillow < 9.1
+        img1 = canvas.convert('1', dither=dith)
+        raw  = img1.tobytes()
+        # PIL '1': bit 0 = negro, bit 1 = blanco → ZPL: bit 1 = imprimir → invertir
+        if len(raw) == total_bytes:
+            bitmap = bytes(b ^ 0xFF for b in raw)
+        else:
+            # Fallback pixel a pixel (más lento pero garantizado)
+            bmp = bytearray(total_bytes)
+            px  = img1.load()
+            for y in range(target_h):
+                rb = y * bytes_per_row
+                for x in range(target_w):
+                    if px[x, y] == 0:   # negro → imprimir
+                        bmp[rb + x // 8] |= (0x80 >> (x % 8))
+            bitmap = bytes(bmp)
+
+    hex_data = bitmap.hex().upper()
+    return (f'^XA\r\n^FO0,0\r\n'
+            f'^GFA,{total_bytes},{total_bytes},{bytes_per_row},{hex_data}\r\n'
+            f'^XZ\r\n').encode('ascii')
+
+
 def _ascii_zpl(text):
     table = str.maketrans('áéíóúÁÉÍÓÚñÑüÜ', 'aeiouAEIOUnNuU')
     return text.translate(table)
@@ -912,6 +1083,246 @@ def ml_print_all():
         send_to_printer(cfg['ip'], cfg['port'], combined)
         return jsonify({'ok': True, 'printed': len(orders) - len(failed),
                         'labels': n_labels, 'failed': failed})
+    except socket.timeout:
+        return jsonify({'ok': False, 'error': f"Timeout de impresora: {cfg['ip']}:{cfg['port']}"}), 500
+    except Exception as e:
+        return jsonify({'ok': False, 'error': str(e)}), 500
+
+
+# ── TiendaNube helpers ────────────────────────────────────────────────────────
+
+def _tn_get_valid_token():
+    """Devuelve el access_token de TN (no expira) o None si no está configurado."""
+    return load_config().get('tn_access_token') or None
+
+
+def _tn_api(method, path, cfg, **kwargs):
+    """Ejecuta un call a la API pública de TiendaNube con bearer auth."""
+    store_id = str(cfg.get('tn_store_id', ''))
+    token    = cfg.get('tn_access_token', '')
+    if not store_id or not token:
+        raise RuntimeError('TiendaNube no autenticado')
+    return http.request(
+        method,
+        f'{TN_API_BASE}/{store_id}{path}',
+        headers={
+            'Authorization': f'bearer {token}',
+            'User-Agent':    TN_USER_AGENT,
+            'Content-Type':  'application/json',
+        },
+        timeout=15,
+        **kwargs,
+    )
+
+
+def _tn_fetch_fulfillment_orders(order_id, cfg):
+    """Devuelve lista de fulfillment orders de un pedido TN, o [] si no hay."""
+    try:
+        r = _tn_api('GET', f'/orders/{order_id}/fulfillment-orders', cfg)
+        return r.json() if r.status_code == 200 else []
+    except Exception:
+        return []
+
+
+def _tn_get_label_pdf(fulfillment_order_id: str, cfg) -> bytes:
+    """Crea el despacho en Envío Nube (cirrus) y descarga el PDF de Andreani."""
+    token    = cfg.get('tn_access_token', '')
+    store_id = str(cfg.get('tn_store_id', ''))
+    r = http.post(
+        TN_CIRRUS,
+        headers={
+            'x-access-token': token,
+            'x-store-id':     store_id,
+            'Content-Type':   'application/json',
+        },
+        json={
+            'createFile':          {'label': True, 'contentDeclaration': False},
+            'fulfillmentOrderIds': [fulfillment_order_id],
+        },
+        timeout=25,
+    )
+    data = r.json()
+    urls = data.get('labelUrls', [])
+    errs = data.get('errors', [])
+    if not urls:
+        raise RuntimeError(f'cirrus no devolvió labelUrls. Errores: {errs}')
+    pdf_r = http.get(urls[0], timeout=30)
+    pdf_r.raise_for_status()
+    return pdf_r.content
+
+
+# ── TiendaNube OAuth ───────────────────────────────────────────────────────────
+
+@app.route('/tn/auth/login')
+def tn_auth_login():
+    cfg       = load_config()
+    client_id = cfg.get('tn_client_id', '').strip()
+    if not client_id:
+        return redirect('/?error=Configurar+App+ID+de+TiendaNube+primero')
+    state = secrets.token_hex(16)
+    _tn_state_store[state] = True
+    url = (f'https://www.tiendanube.com/apps/{client_id}/authorize'
+           f'?redirect_uri={TN_REDIRECT_URI}'
+           f'&state={state}')
+    return redirect(url)
+
+
+@app.route('/tn/auth/callback')
+def tn_auth_callback():
+    code  = request.args.get('code')
+    state = request.args.get('state', '')
+    error = request.args.get('error')
+    if error or not code:
+        return redirect(f'/?tab=tn&error={error or "sin_codigo"}')
+    if state not in _tn_state_store:
+        return redirect('/?tab=tn&error=estado_invalido')
+    _tn_state_store.pop(state, None)
+    cfg = load_config()
+    try:
+        r = http.post(TN_TOKEN_URL, data={
+            'client_id':     cfg.get('tn_client_id', ''),
+            'client_secret': cfg.get('tn_client_secret', ''),
+            'grant_type':    'authorization_code',
+            'code':          code,
+        }, timeout=15)
+        data = r.json()
+        if 'access_token' not in data:
+            return redirect(f'/?tab=tn&error=token_error')
+        cfg['tn_access_token'] = data['access_token']
+        cfg['tn_store_id']     = data.get('user_id')
+        save_config(cfg)
+        return redirect('/?tab=tn')
+    except Exception as e:
+        return redirect(f'/?tab=tn&error={str(e)[:80]}')
+
+
+@app.route('/tn/auth/status')
+def tn_auth_status():
+    token = _tn_get_valid_token()
+    if not token:
+        return jsonify({'logged_in': False})
+    cfg = load_config()
+    return jsonify({'logged_in': True, 'store_id': cfg.get('tn_store_id')})
+
+
+@app.route('/tn/auth/logout', methods=['POST'])
+def tn_auth_logout():
+    cfg = load_config()
+    cfg.pop('tn_access_token', None)
+    cfg.pop('tn_store_id', None)
+    save_config(cfg)
+    return jsonify({'ok': True})
+
+
+# ── TiendaNube Orders ──────────────────────────────────────────────────────────
+
+@app.route('/tn/orders')
+def tn_orders():
+    """Lista pedidos TN abiertos y pagados (candidatos a imprimir etiqueta Andreani)."""
+    token = _tn_get_valid_token()
+    if not token:
+        return jsonify({'ok': False, 'need_login': True}), 401
+    cfg = load_config()
+    try:
+        r = _tn_api('GET', '/orders', cfg, params={
+            'status':         'open',
+            'payment_status': 'paid',
+            'per_page':       50,
+        })
+        if r.status_code != 200:
+            return jsonify({'ok': False, 'error': f'TN API: {r.status_code} {r.text[:200]}'}), 500
+        orders = r.json()
+        return jsonify({'ok': True, 'orders': orders, 'total': len(orders)})
+    except Exception as e:
+        return jsonify({'ok': False, 'error': str(e)}), 500
+
+
+@app.route('/tn/print/<int:order_id>', methods=['POST'])
+def tn_print(order_id):
+    """Obtiene fulfillment order, genera despacho en cirrus, convierte PDF a ZPL e imprime."""
+    token = _tn_get_valid_token()
+    if not token:
+        return jsonify({'ok': False, 'need_login': True}), 401
+    cfg = load_config()
+    try:
+        # 1. Buscar fulfillment order pendiente
+        fos = _tn_fetch_fulfillment_orders(order_id, cfg)
+        fo  = next(
+            (f for f in fos if f.get('status') not in ('DISPATCHED', 'CANCELLED', 'FULFILLED')),
+            None
+        )
+        if not fo:
+            # Si ya estaba despachado pero queremos reimprimir, usar el primero disponible
+            fo = fos[0] if fos else None
+        if not fo:
+            return jsonify({'ok': False, 'error': 'Sin fulfillment order para este pedido. ¿Es un pedido con Envío Nube?'}), 404
+
+        # 2. Obtener PDF de Andreani
+        pdf_bytes = _tn_get_label_pdf(fo['id'], cfg)
+
+        # 3. Convertir PDF → ZPL
+        zpl = pdf_to_zpl(
+            pdf_bytes,
+            width_mm=float(cfg.get('label_width_mm', 100)),
+            height_mm=float(cfg.get('label_height_mm', 150)),
+            dpi=int(cfg.get('dpi', 203)),
+        )
+
+        # 4. Imprimir
+        send_to_printer(cfg['ip'], cfg['port'], zpl)
+        return jsonify({'ok': True, 'labels': 1, 'fulfillment_id': fo['id']})
+
+    except socket.timeout:
+        return jsonify({'ok': False, 'error': f"Timeout de impresora: {cfg['ip']}:{cfg['port']}"}), 500
+    except ConnectionRefusedError:
+        return jsonify({'ok': False, 'error': 'Impresora no responde'}), 500
+    except Exception as e:
+        return jsonify({'ok': False, 'error': str(e)}), 500
+
+
+@app.route('/tn/print-all', methods=['POST'])
+def tn_print_all():
+    """Imprime etiquetas Andreani de todos los pedidos TN indicados."""
+    token = _tn_get_valid_token()
+    if not token:
+        return jsonify({'ok': False, 'need_login': True}), 401
+    cfg      = load_config()
+    body     = request.get_json() or {}
+    order_ids = body.get('order_ids', [])
+    if not order_ids:
+        return jsonify({'ok': False, 'error': 'Sin pedidos'}), 400
+
+    combined = b''
+    printed, failed = 0, []
+
+    for oid in order_ids[:20]:
+        try:
+            fos = _tn_fetch_fulfillment_orders(oid, cfg)
+            fo  = next(
+                (f for f in fos if f.get('status') not in ('DISPATCHED', 'CANCELLED', 'FULFILLED')),
+                fos[0] if fos else None
+            )
+            if not fo:
+                failed.append(str(oid))
+                continue
+            pdf_bytes = _tn_get_label_pdf(fo['id'], cfg)
+            zpl = pdf_to_zpl(
+                pdf_bytes,
+                width_mm=float(cfg.get('label_width_mm', 100)),
+                height_mm=float(cfg.get('label_height_mm', 150)),
+                dpi=int(cfg.get('dpi', 203)),
+            )
+            combined += zpl
+            printed  += 1
+        except Exception:
+            failed.append(str(oid))
+
+    if not combined:
+        return jsonify({'ok': False, 'error': 'No se pudo obtener ninguna etiqueta.'}), 502
+
+    try:
+        send_to_printer(cfg['ip'], cfg['port'], combined)
+        return jsonify({'ok': True, 'printed': printed, 'labels': printed, 'failed': failed})
     except socket.timeout:
         return jsonify({'ok': False, 'error': f"Timeout de impresora: {cfg['ip']}:{cfg['port']}"}), 500
     except Exception as e:

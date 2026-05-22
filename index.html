@@ -15,6 +15,8 @@
   --accent-d:#c97f10;
   --ml:      #ffe600;
   --ml-d:    #ccb800;
+  --tn:      #00c1a2;
+  --tn-d:    #00a48c;
   --text:    #e8e9ed;
   --text2:   #8a8d9a;
   --ok:      #4caf88;
@@ -236,6 +238,13 @@ footer { text-align:center; font-size:.7rem; color:var(--text2); margin-top:20px
 .btn-ap-on:hover  { background:rgba(76,175,136,.28); }
 .btn-ap-off { background:rgba(245,166,35,.1);   color:var(--warn); border:1px solid rgba(245,166,35,.25); }
 .btn-ap-off:hover { background:rgba(245,166,35,.2); }
+
+/* ── TiendaNube ── */
+.btn-tn      { background:var(--tn);      color:#111; }
+.btn-tn:hover{ background:var(--tn-d); }
+.tn-type     { border-left:3px solid var(--tn); }
+.badge-andreani { background:rgba(0,193,162,.15); color:var(--tn); }
+.tn-section  { color:var(--tn); border-color:rgba(0,193,162,.3); }
 </style>
 </head>
 <body>
@@ -251,7 +260,7 @@ footer { text-align:center; font-size:.7rem; color:var(--text2); margin-top:20px
   </div>
   <div>
     <h1>TSC Label Printer</h1>
-    <div class="sub">Impresión ZPL directa · MercadoLibre Argentina</div>
+    <div class="sub">Impresión ZPL directa · MercadoLibre · TiendaNube</div>
   </div>
 </header>
 
@@ -268,8 +277,9 @@ footer { text-align:center; font-size:.7rem; color:var(--text2); margin-top:20px
 
 <!-- Tabs -->
 <div class="tabs">
-  <button class="tab-btn" data-tab="print" onclick="switchTab('print')">🖨️ Imprimir archivo</button>
-  <button class="tab-btn active" data-tab="orders" onclick="switchTab('orders')">📦 Pedidos ML</button>
+  <button class="tab-btn" data-tab="print" onclick="switchTab('print')">🖨️ Archivo</button>
+  <button class="tab-btn active" data-tab="orders" onclick="switchTab('orders')">📦 MercadoLibre</button>
+  <button class="tab-btn" data-tab="tn" onclick="switchTab('tn')">🛒 TiendaNube</button>
 </div>
 
 <!-- ══════════════ TAB: IMPRIMIR ══════════════ -->
@@ -364,12 +374,55 @@ footer { text-align:center; font-size:.7rem; color:var(--text2); margin-top:20px
 </div><!-- /tab-orders -->
 
 
+<!-- ══════════════ TAB: TIENDANUBE ══════════════ -->
+<div id="tab-tn" class="tab-content">
+
+  <!-- Credenciales TN (colapsable) -->
+  <div class="card">
+    <button class="col-toggle" onclick="toggleCol('tnCredBody','tnCredArrow')">
+      <span>Credenciales de la app TiendaNube</span><span class="col-arrow" id="tnCredArrow">▾</span>
+    </button>
+    <div class="collapsible" id="tnCredBody">
+      <div class="col-body">
+        <div class="cred-row">
+          <div><label>App ID (client_id)</label><input type="text" id="tnClientId" placeholder="12345"></div>
+          <div><label>Secret key</label><input type="password" id="tnClientSecret" placeholder="••••••••••••••••"></div>
+        </div>
+        <button class="btn-s btn-sm" onclick="saveTNCredentials()">
+          Guardar credenciales<span class="saved-pill" id="tnCredPill">✓</span>
+        </button>
+        <div class="hint" style="margin-top:10px">
+          Crear la app en <strong>partners.tiendanube.com</strong> · Redirect URI: <code style="background:var(--surf3);padding:1px 5px;border-radius:3px;font-size:.78rem">https://willyjaeger.github.io/tsc-label-printer/tn-callback.html</code>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Estado de login / contenido de pedidos TN -->
+  <div id="tnArea">
+    <!-- Se renderiza por JS -->
+  </div>
+
+</div><!-- /tab-tn -->
+
+
 <footer>TSC Label Printer · ZPL over TCP 9100 · local</footer>
 
 <script>
 const API = 'http://localhost:5050';
 let mlUser = null;
 let ordersData = [];
+
+// ── TiendaNube state ──────────────────────────────────────────────────────────
+let tnUser = null;
+let tnOrdersData = [];
+const TN_PRINTED_KEY = 'tsc_tn_printed';
+let tnPrintedSet = new Set(JSON.parse(localStorage.getItem(TN_PRINTED_KEY) || '[]'));
+function tnMarkPrinted(id) {
+  tnPrintedSet.add(String(id));
+  localStorage.setItem(TN_PRINTED_KEY, JSON.stringify([...tnPrintedSet]));
+}
+function tnIsPrinted(id) { return tnPrintedSet.has(String(id)); }
 
 // ── Estado de impresión (persiste entre recargas) ──────
 const PRINTED_KEY  = 'tsc_printed';
@@ -408,10 +461,12 @@ async function init() {
   try {
     const r = await fetch(API + '/config');
     const c = await r.json();
-    document.getElementById('printerIp').value    = c.ip            ?? '192.168.1.100';
-    document.getElementById('printerPort').value  = c.port          ?? 9100;
-    document.getElementById('mlClientId').value     = c.ml_client_id     ?? '';
-    document.getElementById('mlClientSecret').value = c.ml_client_secret ?? '';
+    document.getElementById('printerIp').value       = c.ip               ?? '192.168.1.100';
+    document.getElementById('printerPort').value     = c.port             ?? 9100;
+    document.getElementById('mlClientId').value      = c.ml_client_id     ?? '';
+    document.getElementById('mlClientSecret').value  = c.ml_client_secret ?? '';
+    document.getElementById('tnClientId').value      = c.tn_client_id     ?? '';
+    document.getElementById('tnClientSecret').value  = c.tn_client_secret ?? '';
     cfgDpi           = c.dpi             ?? 203;
     cfgLabelHeightMm = c.label_height_mm ?? 150;
   } catch(e) {
@@ -419,9 +474,13 @@ async function init() {
   }
 
   const params = new URLSearchParams(location.search);
-  if (params.has('tab')) history.replaceState({}, '', '/');
+  if (params.has('tab')) {
+    switchTab(params.get('tab'));
+    history.replaceState({}, '', '/');
+  }
 
   await checkAuthStatus();
+  await checkTNAuthStatus();
   loadOrdersIfReady();
 }
 
@@ -429,9 +488,12 @@ async function init() {
 function switchTab(tab) {
   document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
   document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
-  document.getElementById('tab-' + tab).classList.add('active');
-  document.querySelector(`[data-tab="${tab}"]`).classList.add('active');
+  const tabEl  = document.getElementById('tab-' + tab);
+  const btnEl  = document.querySelector(`[data-tab="${tab}"]`);
+  if (tabEl)  tabEl.classList.add('active');
+  if (btnEl)  btnEl.classList.add('active');
   if (tab === 'orders') loadOrdersIfReady();
+  if (tab === 'tn')     loadTNOrders();
 }
 
 // ── Collapsibles ──────────────────────────────────────
@@ -607,8 +669,11 @@ async function runAutoCal(btn) {
     const r = await fetch(API + '/autocal', { method:'POST' });
     const d = await r.json();
     if (d.ok) {
-      setCalStatus('ok', '✓ Comando enviado — la impresora está avanzando etiquetas');
-      toast('✓ Calibración iniciada', 'ok');
+      const gapInfo = d.gap_source === 'config'
+        ? `gap ${d.gap_mm} mm (configurado)`
+        : `gap ${d.gap_mm} mm detectado automáticamente`;
+      setCalStatus('ok', `✓ Calibrado — ${gapInfo} — retrocedió ${d.backfeed_dots} dots`);
+      toast(`✓ Calibrado · gap ${d.gap_mm} mm`, 'ok');
     } else {
       setCalStatus('err', '✗ ' + d.error);
       toast('✗ ' + d.error, 'err');
@@ -1098,6 +1163,214 @@ function playBeep() {
       o.start(t); o.stop(t + 0.2);
     });
   } catch(e) {}
+}
+
+// ── TiendaNube ────────────────────────────────────────────────────────────────
+
+async function saveTNCredentials() {
+  await fetch(API + '/config', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({
+      tn_client_id:     document.getElementById('tnClientId').value.trim(),
+      tn_client_secret: document.getElementById('tnClientSecret').value.trim(),
+    }),
+  });
+  flashPill('tnCredPill');
+}
+
+async function checkTNAuthStatus() {
+  try {
+    const r = await fetch(API + '/tn/auth/status');
+    const d = await r.json();
+    tnUser = d.logged_in ? d : null;
+  } catch(e) {
+    tnUser = null;
+  }
+  renderTNArea();
+}
+
+function loginWithTN() {
+  window.location.href = API + '/tn/auth/login';
+}
+
+async function tnLogout() {
+  await fetch(API + '/tn/auth/logout', { method: 'POST' });
+  tnUser = null;
+  tnOrdersData = [];
+  renderTNArea();
+}
+
+async function loadTNOrders() {
+  if (!tnUser) return;
+  renderTNArea(true);
+  try {
+    const r = await fetch(API + '/tn/orders');
+    if (r.status === 401) { tnUser = null; renderTNArea(); return; }
+    const d = await r.json();
+    if (d.ok) {
+      tnOrdersData = d.orders;
+      renderTNArea();
+    } else {
+      renderTNArea(false, d.error);
+    }
+  } catch(e) {
+    renderTNArea(false, e.message);
+  }
+}
+
+async function printTNOrder(orderId, cardEl, reprint) {
+  if (reprint && !confirm('Esta etiqueta ya fue impresa.\n¿Reimprimir de todas formas?')) return;
+  cardEl.classList.remove('error');
+  cardEl.classList.add('printing');
+  try {
+    const r = await fetch(`${API}/tn/print/${orderId}`, { method: 'POST' });
+    const d = await r.json();
+    cardEl.classList.remove('printing');
+    if (d.ok) {
+      tnMarkPrinted(orderId);
+      cardEl.classList.add('printed');
+      const btn = cardEl.querySelector('.print-btn');
+      if (btn) {
+        btn.classList.remove('btn-ok');
+        btn.classList.add('btn-p');
+        btn.textContent = '↺ Reimprimir';
+        btn.onclick = () => printTNOrder(orderId, cardEl, true);
+      }
+      offerRetract(d.labels || 1);
+      toast('✓ Etiqueta Andreani impresa', 'ok');
+    } else {
+      cardEl.classList.add('error');
+      alert('Error al imprimir:\n\n' + d.error);
+    }
+  } catch(e) {
+    cardEl.classList.remove('printing');
+    cardEl.classList.add('error');
+    alert(e.message);
+  }
+}
+
+async function printAllTNOrders() {
+  const pending = tnOrdersData.filter(o => !tnIsPrinted(o.id));
+  if (!pending.length) return;
+  if (!confirm(`Imprimir ${pending.length} etiqueta(s) Andreani?`)) return;
+  try {
+    const r = await fetch(API + '/tn/print-all', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ order_ids: pending.map(o => o.id) }),
+    });
+    const d = await r.json();
+    if (d.ok) {
+      pending.forEach(o => tnMarkPrinted(o.id));
+      renderTNArea();
+      const warn = d.failed?.length ? ` · Fallaron: ${d.failed.join(', ')}` : '';
+      toast(`✓ ${d.printed} etiqueta(s) impresas${warn}`, 'ok');
+      offerRetract(d.labels || d.printed);
+    } else {
+      alert('Error: ' + d.error);
+    }
+  } catch(e) { alert(e.message); }
+}
+
+function renderTNArea(loading = false, errorMsg = null) {
+  const area = document.getElementById('tnArea');
+  if (!area) return;
+
+  if (!tnUser) {
+    area.innerHTML = `
+      <div class="card ml-login-card">
+        <div class="ml-logo">🛒</div>
+        <div class="ml-login-title">Conectar con TiendaNube</div>
+        <div class="ml-login-sub">
+          Ingresá con tu cuenta vendedor para ver los pedidos<br>
+          con envío Andreani (Envío Nube) e imprimir<br>
+          las etiquetas directo a la impresora TSC.
+        </div>
+        <button class="btn-tn" onclick="loginWithTN()">Conectar con TiendaNube</button>
+      </div>`;
+    return;
+  }
+
+  let content = `
+    <div class="ml-status">
+      <div>
+        <div class="nick">🏪 Tienda #${tnUser.store_id}</div>
+        <div class="lbl">Conectado a TiendaNube</div>
+      </div>
+      <div class="spacer"></div>
+      <button class="btn-d btn-sm" onclick="tnLogout()">Desconectar</button>
+    </div>`;
+
+  if (loading) {
+    content += `<div class="card empty-state"><div><span class="spinner"></span> Cargando pedidos…</div></div>`;
+    area.innerHTML = content;
+    return;
+  }
+
+  if (errorMsg) {
+    content += `<div class="card empty-state"><div class="empty-icon">⚠️</div><div class="empty-title">Error al cargar pedidos</div><div class="empty-sub">${errorMsg}</div></div>`;
+    area.innerHTML = content;
+    return;
+  }
+
+  const pending = tnOrdersData.filter(o => !tnIsPrinted(o.id));
+
+  content += `
+    <div class="orders-toolbar">
+      <span class="count">${pending.length} pendiente(s) · ${tnOrdersData.length} total</span>
+      <button class="btn-s btn-sm" onclick="loadTNOrders()">↻ Actualizar</button>
+      ${pending.length ? `<button class="btn-tn btn-sm" onclick="printAllTNOrders()">🖨️ Imprimir todos (${pending.length})</button>` : ''}
+    </div>`;
+
+  if (!tnOrdersData.length) {
+    content += `
+      <div class="card empty-state">
+        <div class="empty-icon">📭</div>
+        <div class="empty-title">No hay pedidos abiertos y pagados</div>
+        <div class="empty-sub">Los pedidos con Envío Nube (Andreani) aparecerán acá cuando estén listos para despachar</div>
+      </div>`;
+    area.innerHTML = content;
+    return;
+  }
+
+  content += `<div class="orders-list" id="tnOrdersList">
+    <div class="section-header tn-section">📦 Andreani · Envío Nube (${tnOrdersData.length})</div>`;
+
+  tnOrdersData.forEach(order => {
+    const printed  = tnIsPrinted(order.id);
+    const btnClass = printed ? 'btn-p' : 'btn-ok';
+    const btnLabel = printed ? '↺ Reimprimir' : '🖨️ Imprimir';
+    const buyer    = order.buyer?.name || order.buyer?.email || '—';
+    const items    = order.products || [];
+    const addr     = order.shipping_address;
+    const addrStr  = addr ? [addr.address, addr.city, addr.province].filter(Boolean).join(', ') : '';
+    const dateStr  = order.created_at ? timeAgo(order.created_at) : '';
+    const cardCls  = ['order-card', 'tn-type', printed ? 'printed' : ''].filter(Boolean).join(' ');
+
+    const itemsHtml = items.map(i =>
+      `<div class="order-item-row"><span class="order-qty">×${i.quantity}</span><span>${i.name || '—'}</span></div>`
+    ).join('');
+
+    content += `
+      <div class="${cardCls}" id="tn-order-${order.id}">
+        <div class="order-head">
+          <span class="order-id">#${order.number || order.id}</span>
+          <span class="order-time">${dateStr}</span>
+        </div>
+        <div class="order-buyer">${buyer}</div>
+        ${addrStr ? `<div class="order-dest">📍 ${addrStr}</div>` : ''}
+        <div class="order-items">${itemsHtml || '<div class="order-item-row" style="color:var(--text2)">Sin detalle de artículos</div>'}</div>
+        <div class="order-footer">
+          <span class="badge badge-andreani" style="margin-right:auto">📦 Andreani</span>
+          <button class="${btnClass} btn-sm print-btn"
+                  onclick="printTNOrder(${order.id}, document.getElementById('tn-order-${order.id}'), ${printed})">${btnLabel}</button>
+        </div>
+      </div>`;
+  });
+
+  content += `</div>`;
+  area.innerHTML = content;
 }
 
 init();

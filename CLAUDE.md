@@ -56,6 +56,13 @@ CONFIG_DIR  = os.path.dirname(sys.executable) if frozen else BUNDLE_DIR
 | GET/POST | `/ml/autoprint` | Estado y configuración del polling automático |
 | GET | `/ml/zpl/<id>` | Descarga ZPL sin imprimir (diagnóstico) |
 | GET | `/ml/debug-orders` | Muestra conteo por estado (diagnóstico) |
+| GET | `/tn/auth/status` | Estado de login TiendaNube |
+| GET | `/tn/auth/login` | Inicia OAuth TN (no PKCE) |
+| GET | `/tn/auth/callback` | Recibe el code de TN y guarda tokens |
+| POST | `/tn/auth/logout` | Borra token TN |
+| GET | `/tn/orders` | Lista pedidos TN abiertos y pagados |
+| POST | `/tn/print/<order_id>` | Imprime etiqueta Andreani de un pedido TN. Retorna `{ok, labels}` |
+| POST | `/tn/print-all` | Imprime todos los pedidos TN indicados. Retorna `{ok, printed, labels, failed}` |
 
 ### Comandos de impresora
 - **ZPL**: `^XA...^XZ` — etiquetas normales
@@ -112,6 +119,39 @@ como `_correlative` + `_correlative_date`.
   "ml_user_id": "...",
   "_correlative": 5,
   "_correlative_date": "2026-05-22"
+}
+```
+
+### TiendaNube Integration
+
+#### OAuth TiendaNube
+- No PKCE (a diferencia de ML)
+- Auth URL: `https://www.tiendanube.com/apps/{client_id}/authorize?redirect_uri=...&state=...`
+- Token URL: `https://www.tiendanube.com/apps/authorize/token`
+- Redirect URI: `https://willyjaeger.github.io/tsc-label-printer/tn-callback.html`
+- El `access_token` de TN **no expira** (no necesita refresh)
+- El `user_id` del response OAuth es el `store_id` para la API
+
+#### Flujo de etiqueta Andreani (Envío Nube)
+1. `GET /v1/{store_id}/orders/{order_id}/fulfillment-orders` → ULID del fulfillment order
+2. `POST https://cirrus.tiendanube.com/nuvem-envio/dispatches` con headers `x-access-token` + `x-store-id` → `{labelUrls: ["https://s3...pdf"]}`
+3. Descargar PDF → `pdf_to_zpl()` → imprimir por TCP 9100
+
+#### `pdf_to_zpl()` — Conversión PDF → ZPL
+- Requiere `pymupdf` (fitz) + `Pillow`
+- Renderiza a alta resolución con `fitz.Matrix`
+- Escala preservando aspecto en canvas blanco del tamaño de la etiqueta
+- Binariza: pixel < 128 → imprimir (ZPL bit 1)
+- Genera `^GFA` con datos en hex
+- Optimización: usa `numpy` si está disponible, sino fallback PIL
+
+#### Config TN (`config.json`)
+```json
+{
+  "tn_client_id": "...",
+  "tn_client_secret": "...",
+  "tn_access_token": "...",
+  "tn_store_id": 6865327
 }
 ```
 

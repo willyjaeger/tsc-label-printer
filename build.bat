@@ -16,7 +16,7 @@ if errorlevel 1 (
 )
 
 echo  [1/3] Instalando dependencias...
-pip install -q flask pyinstaller
+pip install -q flask pyinstaller pymupdf Pillow requests
 if errorlevel 1 (
     echo  ERROR al instalar dependencias.
     pause
@@ -37,7 +37,11 @@ python -m PyInstaller ^
     --hidden-import=werkzeug ^
     --hidden-import=tkinter ^
     --hidden-import=requests ^
+    --hidden-import=PIL ^
+    --hidden-import=PIL.Image ^
     --collect-all=requests ^
+    --collect-all=fitz ^
+    --collect-all=PIL ^
     --name "TSC-Label-Printer" ^
     app.py
 

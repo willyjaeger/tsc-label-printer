@@ -68,6 +68,7 @@ _sse_clients_lock = threading.Lock()
 
 _poll = {
     'enabled':     False,
+    'auto_print':  False,        # imprimir automáticamente al detectar pedidos nuevos
     'interval':    60,           # segundos entre verificaciones
     'last_check':  0.0,
     'checked_at':  0.0,
@@ -433,6 +434,9 @@ def _poll_worker():
 
             new_orders = [o for o in printable if o['id'] not in known_ids]
 
+            with _poll_lock:
+                do_auto_print = _poll['auto_print']
+
             if not was_initialized:
                 # Primera pasada: solo registrar IDs existentes, no imprimir
                 _push_event('poll_status', {
@@ -440,56 +444,58 @@ def _poll_worker():
                     'initialized': True, 'count': len(printable),
                 })
             elif new_orders:
-                # Pedidos nuevos detectados → notificar y auto-imprimir
+                # Pedidos nuevos detectados → siempre notificar
                 _push_event('new_orders', {
                     'count':      len(new_orders),
                     'checked_at': now,
+                    'auto_print': do_auto_print,
                     'orders': [{'id': o['id'],
                                 'shipment_id': o.get('shipping', {}).get('id')}
                                for o in new_orders],
                 })
-                for o in new_orders:
-                    sid = o.get('shipping', {}).get('id')
-                    if not sid:
-                        continue
-                    try:
-                        r = http.get(
-                            f'{ML_API}/shipment_labels',
-                            params={'shipment_ids': sid, 'response_type': 'zpl2'},
-                            headers={'Authorization': f'Bearer {token}'},
-                            timeout=20,
-                        )
-                        zpl, err = _extract_zpl(
-                            r.content, r.status_code, r.text,
-                            r.headers.get('content-type', ''),
-                        )
-                        if err:
-                            _push_event('print_error', {'shipment_id': sid, 'error': err})
+                if do_auto_print:
+                    for o in new_orders:
+                        sid = o.get('shipping', {}).get('id')
+                        if not sid:
                             continue
-                        order_data = {
-                            'order_id':    o['id'],
-                            'shipment_id': str(sid),
-                            'buyer':       (o.get('_shipment') or {}).get('receiver_name')
-                                           or (o.get('buyer') or {}).get('nickname', ''),
-                            'items':       [
-                                {'qty': i['quantity'],
-                                 'title': (i.get('item') or {}).get('title', '')}
-                                for i in o.get('order_items', [])
-                            ],
-                        }
-                        corr = next_correlative()
-                        order_data['correlative'] = corr
-                        payload = (_inject_correlative_into_zpl(zpl, corr)
-                                   + _build_detail_zpl(order_data, cfg))
-                        send_to_printer(cfg['ip'], cfg['port'], payload)
-                        _save_printed_order(order_data)
-                        _push_event('auto_printed', {
-                            'shipment_id': sid,
-                            'order_id':    o['id'],
-                            'buyer':       order_data['buyer'],
-                        })
-                    except Exception as pe:
-                        _push_event('print_error', {'shipment_id': sid, 'error': str(pe)})
+                        try:
+                            r = http.get(
+                                f'{ML_API}/shipment_labels',
+                                params={'shipment_ids': sid, 'response_type': 'zpl2'},
+                                headers={'Authorization': f'Bearer {token}'},
+                                timeout=20,
+                            )
+                            zpl, err = _extract_zpl(
+                                r.content, r.status_code, r.text,
+                                r.headers.get('content-type', ''),
+                            )
+                            if err:
+                                _push_event('print_error', {'shipment_id': sid, 'error': err})
+                                continue
+                            order_data = {
+                                'order_id':    o['id'],
+                                'shipment_id': str(sid),
+                                'buyer':       (o.get('_shipment') or {}).get('receiver_name')
+                                               or (o.get('buyer') or {}).get('nickname', ''),
+                                'items':       [
+                                    {'qty': i['quantity'],
+                                     'title': (i.get('item') or {}).get('title', '')}
+                                    for i in o.get('order_items', [])
+                                ],
+                            }
+                            corr = next_correlative()
+                            order_data['correlative'] = corr
+                            payload = (_inject_correlative_into_zpl(zpl, corr)
+                                       + _build_detail_zpl(order_data, cfg))
+                            send_to_printer(cfg['ip'], cfg['port'], payload)
+                            _save_printed_order(order_data)
+                            _push_event('auto_printed', {
+                                'shipment_id': sid,
+                                'order_id':    o['id'],
+                                'buyer':       order_data['buyer'],
+                            })
+                        except Exception as pe:
+                            _push_event('print_error', {'shipment_id': sid, 'error': str(pe)})
 
                 _push_event('poll_status', {
                     'status': 'idle', 'checked_at': now, 'count': len(printable),
@@ -1526,6 +1532,7 @@ def ml_events():
             with _poll_lock:
                 init_data = {
                     'enabled':     _poll['enabled'],
+                    'auto_print':  _poll['auto_print'],
                     'interval':    _poll['interval'],
                     'status':      _poll['status'],
                     'checked_at':  _poll['checked_at'],
@@ -1562,6 +1569,7 @@ def ml_autoprint_get():
     with _poll_lock:
         return jsonify({
             'enabled':     _poll['enabled'],
+            'auto_print':  _poll['auto_print'],
             'interval':    _poll['interval'],
             'status':      _poll['status'],
             'error':       _poll['error'],
@@ -1582,10 +1590,13 @@ def ml_autoprint_set():
                 _poll['known_ids']   = set()
                 _poll['last_check']  = 0.0   # disparar de inmediato
             _poll['enabled'] = new_val
+        if 'auto_print' in body:
+            _poll['auto_print'] = bool(body['auto_print'])
         if 'interval' in body:
             _poll['interval'] = max(30, int(body['interval']))
     with _poll_lock:
         return jsonify({'ok': True, 'enabled': _poll['enabled'],
+                        'auto_print': _poll['auto_print'],
                         'interval': _poll['interval']})
 
 

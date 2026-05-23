@@ -176,7 +176,8 @@ button:active { transform:scale(.97); }
   transition:border-color .2s;
 }
 .order-card:hover { border-color:rgba(245,166,35,.3); }
-.order-head { display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:8px; }
+.order-head { display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:8px; gap:8px; }
+.order-chk { accent-color:var(--accent); width:15px; height:15px; cursor:pointer; flex-shrink:0; margin-top:2px; }
 .order-id { font-size:.72rem; color:var(--text2); font-family:monospace; }
 .order-time { font-size:.7rem; color:var(--text2); }
 .order-buyer { font-size:.92rem; font-weight:700; margin-bottom:4px; }
@@ -280,6 +281,8 @@ footer { text-align:center; font-size:.7rem; color:var(--text2); margin-top:20px
 .btn-ap-on:hover  { background:rgba(76,175,136,.28); }
 .btn-ap-off { background:rgba(245,166,35,.1);   color:var(--warn); border:1px solid rgba(245,166,35,.25); }
 .btn-ap-off:hover { background:rgba(245,166,35,.2); }
+.ap-chk-label { display:flex; align-items:center; gap:5px; font-size:.78rem; color:var(--text2); cursor:pointer; white-space:nowrap; }
+.ap-chk-label input { accent-color:var(--accent); cursor:pointer; }
 
 /* ── TiendaNube ── */
 .btn-tn      { background:var(--tn);      color:#111; }
@@ -989,6 +992,64 @@ async function printAll() {
   } catch(e) { alert(e.message); }
 }
 
+function toggleSelectOrder(shipId, checked) {
+  if (checked) selectedShipIds.add(String(shipId));
+  else         selectedShipIds.delete(String(shipId));
+  // Solo re-renderizar el toolbar sin redibujar toda la lista
+  const toolbar = document.querySelector('#ordersArea .orders-toolbar');
+  if (toolbar) {
+    const pendingOrders = ordersData.filter(o => {
+      const ss = o._shipment?.status;
+      return ss !== 'shipped' && ss !== 'delivered';
+    });
+    const unprintedIds = pendingOrders.map(o => o.shipping?.id).filter(id => id && !isPrinted(id));
+    const selCount = [...selectedShipIds].filter(id =>
+      pendingOrders.some(o => String(o.shipping?.id) === id)
+    ).length;
+    toolbar.innerHTML = `
+      <span class="count">${unprintedIds.length} pendiente(s)</span>
+      <button class="btn-s btn-sm" onclick="loadOrdersIfReady()">↻ Actualizar</button>
+      ${selCount ? `<button class="btn-ok btn-sm" onclick="printSelected()">🖨️ Imprimir seleccionados (${selCount})</button>` : ''}
+      ${unprintedIds.length ? `<button class="btn-p btn-sm" onclick="printAll()">🖨️ Todos sin imprimir (${unprintedIds.length})</button>` : ''}`;
+  }
+}
+
+async function printSelected() {
+  const pendingOrders = ordersData.filter(o => {
+    const ss = o._shipment?.status;
+    return ss !== 'shipped' && ss !== 'delivered';
+  });
+  const orders = pendingOrders
+    .filter(o => o.shipping?.id && selectedShipIds.has(String(o.shipping.id)))
+    .map(o => ({
+      shipment_id:   o.shipping.id,
+      order_id:      o.id,
+      buyer:         o._shipment?.receiver_name || o.buyer?.nickname || '',
+      address:       [o._shipment?.street, o._shipment?.city, o._shipment?.state].filter(Boolean).join(', '),
+      logistic_type: o._shipment?.logistic_type || '',
+      items:         (o.order_items || []).map(i => ({ qty: i.quantity, title: i.item?.title || '' })),
+    }));
+  if (!orders.length) return;
+
+  try {
+    const r = await fetch(API + '/ml/print-all', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ orders }),
+    });
+    const d = await r.json();
+    if (d.ok) {
+      orders.forEach(o => markPrinted(o.shipment_id));
+      selectedShipIds.clear();
+      renderOrdersArea();
+      const warn = d.failed?.length ? `\nFallaron: ${d.failed.join(', ')}` : '';
+      toast(`✓ ${d.printed} pedido(s) impresos${warn}`, 'ok');
+      offerRetract(d.labels || d.printed * 2);
+    } else {
+      alert('Error: ' + d.error);
+    }
+  } catch(e) { alert(e.message); }
+}
+
 // ── Render ────────────────────────────────────────────
 function renderOrdersArea(loading = false, errorMsg = null) {
   const area = document.getElementById('ordersArea');
@@ -1096,11 +1157,16 @@ function renderOrdersArea(loading = false, errorMsg = null) {
 
   const unprintedIds = pendingOrders.map(o => o.shipping?.id).filter(id => id && !isPrinted(id));
 
+  const selCount = [...selectedShipIds].filter(id =>
+    pendingOrders.some(o => String(o.shipping?.id) === id)
+  ).length;
+
   content += `
     <div class="orders-toolbar">
       <span class="count">${unprintedIds.length} pendiente(s)</span>
       <button class="btn-s btn-sm" onclick="loadOrdersIfReady()">↻ Actualizar</button>
-      ${unprintedIds.length ? `<button class="btn-p btn-sm" onclick="printAll()">🖨️ Imprimir todos (${unprintedIds.length})</button>` : ''}
+      ${selCount ? `<button class="btn-ok btn-sm" onclick="printSelected()">🖨️ Imprimir seleccionados (${selCount})</button>` : ''}
+      ${unprintedIds.length ? `<button class="btn-p btn-sm" onclick="printAll()">🖨️ Todos sin imprimir (${unprintedIds.length})</button>` : ''}
     </div>
     <div class="orders-list" id="ordersList">`;
 
@@ -1121,11 +1187,13 @@ function renderOrdersArea(loading = false, errorMsg = null) {
       `<div class="order-item-row"><span class="order-qty">×${i.quantity}</span><span>${i.item?.title ?? '—'}</span></div>`
     ).join('');
 
+    const chkd = shipId && selectedShipIds.has(String(shipId));
     return `
       <div class="${cardCls}" id="order-${order.id}">
         <div class="order-head">
+          ${shipId ? `<input type="checkbox" class="order-chk" ${chkd?'checked':''} onchange="toggleSelectOrder('${shipId}', this.checked)" title="Seleccionar para imprimir">` : ''}
           <span class="order-id">#${order.id}</span>
-          <span class="order-time">${dateStr}</span>
+          <span class="order-time" style="margin-left:auto">${dateStr}</span>
         </div>
         <div class="order-buyer">${buyer}</div>
         ${addr ? `<div class="order-dest">📍 ${addr}</div>` : ''}
@@ -1187,11 +1255,13 @@ let sseSource     = null;
 let mlTab         = 'despachar';   // 'despachar' | 'en_camino'
 let localOrders   = [];            // desde orders.json vía /local/orders
 let apEnabled     = false;
+let apAutoPrint   = false;         // auto-imprimir al detectar pedidos nuevos
 let apInterval    = 60;
 let apStatus      = 'idle';     // 'idle' | 'running' | 'error'
 let apCheckedAt   = 0;          // epoch seconds from server
 let apInitialized = false;
 let apError       = '';
+let selectedShipIds = new Set(); // IDs de envíos seleccionados para imprimir
 
 function connectSSE() {
   if (sseSource || !mlUser) return;
@@ -1200,6 +1270,7 @@ function connectSSE() {
   sseSource.addEventListener('poll_status', e => {
     const d = JSON.parse(e.data);
     if (d.enabled     !== undefined) apEnabled     = d.enabled;
+    if (d.auto_print  !== undefined) apAutoPrint   = d.auto_print;
     if (d.interval    !== undefined) apInterval    = d.interval;
     if (d.status      !== undefined) apStatus      = d.status;
     if (d.checked_at  !== undefined) apCheckedAt   = d.checked_at;
@@ -1216,7 +1287,7 @@ function connectSSE() {
     playBeep();
     showNotification(
       `${n} pedido${plural ? 's' : ''} nuevo${plural ? 's' : ''} en ML`,
-      'Imprimiendo etiquetas automáticamente…'
+      d.auto_print ? 'Imprimiendo etiquetas automáticamente…' : 'Revisá Despachar para imprimir.'
     );
     loadOrdersIfReady();
   });
@@ -1277,12 +1348,24 @@ async function toggleAutoprint() {
     const r = await fetch(API + '/ml/autoprint', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({ enabled: !apEnabled, interval: apInterval }),
+      body: JSON.stringify({ enabled: !apEnabled, interval: apInterval, auto_print: apAutoPrint }),
     });
     const d = await r.json();
     apEnabled = d.enabled;
     renderAutoprintBar();
   } catch(e) { console.warn('autoprint toggle:', e); }
+}
+
+async function setApAutoPrint(val) {
+  apAutoPrint = val;
+  try {
+    await fetch(API + '/ml/autoprint', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ auto_print: apAutoPrint }),
+    });
+  } catch(e) { console.warn('setApAutoPrint:', e); }
+  renderAutoprintBar();
 }
 
 async function setApInterval(val) {
@@ -1315,22 +1398,26 @@ function renderAutoprintBar() {
     statusTxt = apCheckedAt ? checkedAgoStr() : 'Activo';
   }
 
-  const btnLabel = apEnabled ? '⏹ Detener' : '🔔 Auto-imprimir';
+  const btnLabel = apEnabled ? '⏹ Detener' : '🔔 Monitorear';
   const btnCls   = apEnabled ? 'btn-ap-on' : 'btn-ap-off';
 
   bar.innerHTML = `
-    <span class="ap-label">Auto-impresión</span>
     <div class="ap-status">
       <span class="ap-dot ${dotCls}"></span>
       <span id="apStatusTxt">${statusTxt}</span>
     </div>
     <span class="ap-spacer"></span>
+    ${apEnabled ? `
     <select class="ap-select" onchange="setApInterval(this.value)">
       <option value="30"  ${apInterval===30  ?'selected':''}>cada 30 s</option>
       <option value="60"  ${apInterval===60  ?'selected':''}>cada 1 min</option>
       <option value="120" ${apInterval===120 ?'selected':''}>cada 2 min</option>
       <option value="300" ${apInterval===300 ?'selected':''}>cada 5 min</option>
     </select>
+    <label class="ap-chk-label">
+      <input type="checkbox" ${apAutoPrint?'checked':''} onchange="setApAutoPrint(this.checked)">
+      Auto-imprimir
+    </label>` : ''}
     <button class="btn-sm ${btnCls}" onclick="toggleAutoprint()">${btnLabel}</button>`;
 }
 

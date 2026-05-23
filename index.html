@@ -1058,8 +1058,24 @@ function renderOrdersArea(loading = false, errorMsg = null) {
     return;
   }
 
-  const unprintedIds    = ordersData.map(o => o.shipping?.id).filter(id => id && !isPrinted(id));
-  const shippedOrders   = ordersData.filter(o => o._status_label === 'shipped');
+  // Todos ya fueron despachados (shipped) — están en En camino
+  const _preCheck = ordersData.filter(o => o._status_label !== 'shipped');
+  if (!_preCheck.length) {
+    content += `
+      <div class="orders-toolbar">
+        <span class="count">Sin pedidos pendientes</span>
+        <button class="btn-s btn-sm" onclick="loadOrdersIfReady()">↻ Actualizar</button>
+      </div>
+      <div class="card empty-state">
+        <div class="empty-icon">🚚</div>
+        <div class="empty-title">Todos los pedidos ya fueron despachados</div>
+        <div class="empty-sub">Revisalos en la pestaña En camino</div>
+      </div>`;
+    area.innerHTML = content;
+    return;
+  }
+
+  // Despachar: solo pedidos NO despachados aún (ready_to_ship / paid). Shipped → En camino.
   const pendingOrders   = ordersData.filter(o => o._status_label !== 'shipped');
   const isFlexType      = t => t === 'me2' || t === 'xd_drop_off' || t === 'self_service';
   const isCorrType      = t => t === 'cross_docking';
@@ -1067,9 +1083,11 @@ function renderOrdersArea(loading = false, errorMsg = null) {
   const flexOrders   = pendingOrders.filter(o => isFlexType(o._shipment?.logistic_type));
   const correoOrders = pendingOrders.filter(o => isCorrType(o._shipment?.logistic_type));
 
+  const unprintedIds = pendingOrders.map(o => o.shipping?.id).filter(id => id && !isPrinted(id));
+
   content += `
     <div class="orders-toolbar">
-      <span class="count">${unprintedIds.length} pendiente(s)${shippedOrders.length ? ` · ${shippedOrders.length} despachado(s) hoy` : ''}</span>
+      <span class="count">${unprintedIds.length} pendiente(s)</span>
       <button class="btn-s btn-sm" onclick="loadOrdersIfReady()">↻ Actualizar</button>
       ${unprintedIds.length ? `<button class="btn-p btn-sm" onclick="printAll()">🖨️ Imprimir todos (${unprintedIds.length})</button>` : ''}
     </div>
@@ -1140,14 +1158,6 @@ function renderOrdersArea(loading = false, errorMsg = null) {
   renderGroup(flexOrders,   'flex-type',   'badge-flex',   '⚡ Flex',   '⚡ Envío Flex — ME2');
   renderGroup(correoOrders, 'correo-type', 'badge-correo', '📮 Correo', '📮 Correo / Estándar');
   renderGroup(otherOrders,  'flex-type',   'badge-flex',   '📦 Envío',  '📦 Otros envíos');
-  if (shippedOrders.length) {
-    content += `<div class="section-header" style="opacity:.6;border-color:#6495ed">🚚 Ya despachados hoy (${shippedOrders.length})</div>`;
-    shippedOrders.forEach(o => {
-      const lt = o._shipment?.logistic_type;
-      const [tc, bc, bl] = isFlexType(lt) ? ['flex-type','badge-flex','⚡ Flex'] : ['correo-type','badge-correo','📮 Correo'];
-      content += orderCardHtml(o, tc, bc, bl);
-    });
-  }
 
   content += `</div>`;
   area.innerHTML = content;

@@ -1059,7 +1059,10 @@ function renderOrdersArea(loading = false, errorMsg = null) {
   }
 
   // Todos ya fueron despachados (shipped) — están en En camino
-  const _preCheck = ordersData.filter(o => o._status_label !== 'shipped');
+  const _preCheck = ordersData.filter(o => {
+    const ss = o._shipment?.status;
+    return ss !== 'shipped' && ss !== 'delivered';
+  });
   if (!_preCheck.length) {
     content += `
       <div class="orders-toolbar">
@@ -1075,8 +1078,13 @@ function renderOrdersArea(loading = false, errorMsg = null) {
     return;
   }
 
-  // Despachar: solo pedidos NO despachados aún (ready_to_ship / paid). Shipped → En camino.
-  const pendingOrders   = ordersData.filter(o => o._status_label !== 'shipped');
+  // Despachar: excluir pedidos cuyo ENVÍO ya fue retirado por el correo/moto.
+  // _status_label es el status de la orden en ML (siempre paid/ready_to_ship por como consultamos).
+  // Lo que importa es _shipment.status: si es 'shipped' o 'delivered', ya lo retiraron.
+  const pendingOrders = ordersData.filter(o => {
+    const ss = o._shipment?.status;
+    return ss !== 'shipped' && ss !== 'delivered';
+  });
   const isFlexType      = t => t === 'me2' || t === 'xd_drop_off' || t === 'self_service';
   const isCorrType      = t => t === 'cross_docking';
 

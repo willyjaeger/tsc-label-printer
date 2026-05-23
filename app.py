@@ -751,6 +751,7 @@ def _fetch_shipment(shipment_id, token):
         addr = d.get('receiver_address', {})
         return shipment_id, {
             'logistic_type':    d.get('logistic_type', ''),
+            'status':           d.get('status', ''),
             'receiver_name':    addr.get('receiver_name', ''),
             'street':           f"{addr.get('street_name','')} {addr.get('street_number','')}".strip(),
             'city':             addr.get('city', {}).get('name', ''),

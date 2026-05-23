@@ -439,6 +439,22 @@ def _poll_worker():
 
             new_orders = [o for o in printable if o['id'] not in known_ids]
 
+            # Detectar pedidos impresos que desaparecieron (posible cancelación)
+            if was_initialized:
+                disappeared = known_ids - current_ids
+                if disappeared:
+                    local = load_orders()
+                    for saved in local:
+                        oid = saved.get('order_id')
+                        if oid and int(oid) in disappeared:
+                            ship_st = saved.get('shipment_status', '')
+                            if ship_st not in ('shipped', 'delivered', 'not_delivered'):
+                                _push_event('possible_cancel', {
+                                    'order_id':    str(oid),
+                                    'shipment_id': saved.get('shipment_id', ''),
+                                    'buyer':       saved.get('buyer', ''),
+                                })
+
             with _poll_lock:
                 do_auto_print = _poll['auto_print']
 

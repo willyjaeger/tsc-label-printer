@@ -292,6 +292,20 @@ footer { text-align:center; font-size:.7rem; color:var(--text2); margin-top:20px
 .btn-ap-on:hover  { background:rgba(76,175,136,.28); }
 .btn-ap-off { background:rgba(245,166,35,.1);   color:var(--warn); border:1px solid rgba(245,166,35,.25); }
 .btn-ap-off:hover { background:rgba(245,166,35,.2); }
+.cancel-alert {
+  display:flex; align-items:center; gap:12px;
+  background:rgba(224,85,85,.15); border:1px solid rgba(224,85,85,.5);
+  border-left:4px solid var(--err); border-radius:8px;
+  padding:12px 14px; margin-bottom:10px;
+  animation:blink .8s ease-in-out 3;
+}
+.cancel-alert-icon { font-size:1.4rem; flex-shrink:0; }
+.cancel-alert-body { flex:1; }
+.cancel-alert-title { font-weight:700; color:var(--err); font-size:.95rem; }
+.cancel-alert-sub   { font-size:.8rem; color:var(--text2); margin-top:2px; }
+.cancel-alert-close { background:none; border:1px solid rgba(224,85,85,.4); color:var(--err);
+  border-radius:6px; padding:4px 10px; cursor:pointer; font-size:.8rem; flex-shrink:0; }
+.cancel-alert-close:hover { background:rgba(224,85,85,.2); }
 .ap-chk-label { display:flex; align-items:center; gap:5px; font-size:.78rem; color:var(--text2); cursor:pointer; white-space:nowrap; }
 .ap-chk-label input { accent-color:var(--accent); cursor:pointer; }
 
@@ -421,6 +435,9 @@ footer { text-align:center; font-size:.7rem; color:var(--text2); margin-top:20px
 
   <!-- Barra de auto-impresión (visible solo cuando conectado) -->
   <div id="autoprintBar" style="display:none"></div>
+
+  <!-- Alertas de posible cancelación -->
+  <div id="cancelAlertsArea"></div>
 
   <!-- Estado de login / contenido de orders -->
   <div id="ordersArea">
@@ -1325,6 +1342,11 @@ function connectSSE() {
     console.warn('Auto-print error — envío', d.shipment_id, ':', d.error);
   });
 
+  sseSource.addEventListener('possible_cancel', e => {
+    const d = JSON.parse(e.data);
+    addCancelAlert(d.order_id, d.shipment_id, d.buyer);
+  });
+
   sseSource.addEventListener('orders_sync', e => {
     const d = JSON.parse(e.data);
     localOrders = d.orders || [];
@@ -1455,6 +1477,37 @@ async function requestNotificationPermission() {
 function showNotification(title, body) {
   if (!('Notification' in window) || Notification.permission !== 'granted') return;
   try { new Notification(title, { body }); } catch(e) {}
+}
+
+// ── Alertas de posible cancelación ────────────────────────────────────────────
+const _cancelAlerts = new Map(); // order_id → datos
+
+function addCancelAlert(orderId, shipmentId, buyer) {
+  if (_cancelAlerts.has(orderId)) return; // ya mostrada
+  _cancelAlerts.set(orderId, { orderId, shipmentId, buyer });
+  renderCancelAlerts();
+  playBeep();
+  showNotification('⚠️ Posible cancelación', `Pedido #${orderId} (${buyer}) ya no aparece en ML. No lo despaches.`);
+}
+
+function dismissCancelAlert(orderId) {
+  _cancelAlerts.delete(orderId);
+  renderCancelAlerts();
+}
+
+function renderCancelAlerts() {
+  const area = document.getElementById('cancelAlertsArea');
+  if (!area) return;
+  if (!_cancelAlerts.size) { area.innerHTML = ''; return; }
+  area.innerHTML = [..._cancelAlerts.values()].map(a => `
+    <div class="cancel-alert">
+      <span class="cancel-alert-icon">🚫</span>
+      <div class="cancel-alert-body">
+        <div class="cancel-alert-title">Cancelado — NO despachar: Pedido #${a.orderId}</div>
+        <div class="cancel-alert-sub">${a.buyer ? `Comprador: ${a.buyer} · ` : ''}Envío: ${a.shipmentId || '—'} · Ya no aparece en MercadoLibre</div>
+      </div>
+      <button class="cancel-alert-close" onclick="dismissCancelAlert('${a.orderId}')">✓ Entendido</button>
+    </div>`).join('');
 }
 
 // Triple beep ascendente

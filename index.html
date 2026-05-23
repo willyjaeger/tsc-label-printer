@@ -1043,7 +1043,7 @@ function renderOrdersArea(loading = false, errorMsg = null) {
     return;
   }
 
-  if (!visibleOrders.length) {
+  if (!ordersData.length) {
     content += `
       <div class="orders-toolbar">
         <span class="count">Sin pedidos pendientes</span>
@@ -1058,13 +1058,9 @@ function renderOrdersArea(loading = false, errorMsg = null) {
     return;
   }
 
-  // Excluir pedidos que ya están trackeados en En camino (orders.json)
-  const enCaminoIds  = new Set(localOrders.map(o => String(o.shipment_id)));
-  const visibleOrders = ordersData.filter(o => !enCaminoIds.has(String(o.shipping?.id)));
-
-  const unprintedIds    = visibleOrders.map(o => o.shipping?.id).filter(id => id && !isPrinted(id));
-  const shippedOrders   = visibleOrders.filter(o => o._status_label === 'shipped');
-  const pendingOrders   = visibleOrders.filter(o => o._status_label !== 'shipped');
+  const unprintedIds    = ordersData.map(o => o.shipping?.id).filter(id => id && !isPrinted(id));
+  const shippedOrders   = ordersData.filter(o => o._status_label === 'shipped');
+  const pendingOrders   = ordersData.filter(o => o._status_label !== 'shipped');
   const isFlexType      = t => t === 'me2' || t === 'xd_drop_off' || t === 'self_service';
   const isCorrType      = t => t === 'cross_docking';
 

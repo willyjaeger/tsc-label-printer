@@ -835,10 +835,13 @@ function ecStatusInfo(status, substatus) {
 }
 
 function renderEnCaminoArea(content) {
-  const enCamino = localOrders.slice().sort((a, b) => {
-    const order = ['shipped','handling','ready_to_ship','printed','delivered','not_delivered'];
-    return (order.indexOf(a.shipment_status) - order.indexOf(b.shipment_status));
-  });
+  // Solo pedidos que el correo/moto ya retiró. Los impresos sin retirar siguen en Despachar.
+  const enCamino = localOrders
+    .filter(o => o.shipment_status === 'shipped' || o.shipment_status === 'delivered' || o.shipment_status === 'not_delivered')
+    .sort((a, b) => {
+      const order = ['shipped','delivered','not_delivered'];
+      return (order.indexOf(a.shipment_status) - order.indexOf(b.shipment_status));
+    });
 
   if (!enCamino.length) {
     content += `<div class="card empty-state">
@@ -1006,7 +1009,7 @@ function renderOrdersArea(loading = false, errorMsg = null) {
 
   const nick = mlUser.nickname ?? `Usuario #${mlUser.user_id}`;
 
-  const ecCount = localOrders.length;
+  const ecCount = localOrders.filter(o => o.shipment_status === 'shipped' || o.shipment_status === 'delivered' || o.shipment_status === 'not_delivered').length;
   let content = `
     <div class="ml-status">
       <div>

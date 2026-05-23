@@ -412,6 +412,11 @@ def _poll_worker():
 
             printable = []
             for o in all_orders:
+                if o.get('cancel_detail'):
+                    continue
+                status_detail = o.get('status_detail', '') or ''
+                if 'cancel' in status_detail.lower():
+                    continue
                 sid  = o.get('shipping', {}).get('id')
                 info = shipment_data.get(sid, {})
                 if info.get('logistic_type') == 'fulfillment':
@@ -830,9 +835,14 @@ def ml_orders():
                 sid, data = fut.result()
                 shipment_data[sid] = data
 
-        # 3. Filtrar Full y enriquecer con datos de envío
+        # 3. Filtrar Full, cancelados y enriquecer con datos de envío
         printable = []
         for o in all_orders:
+            if o.get('cancel_detail'):
+                continue   # cancelación solicitada o confirmada
+            status_detail = o.get('status_detail', '') or ''
+            if 'cancel' in status_detail.lower():
+                continue
             sid  = o.get('shipping', {}).get('id')
             info = shipment_data.get(sid, {})
             if info.get('logistic_type') == 'fulfillment':

@@ -185,8 +185,9 @@ button:active { transform:scale(.97); }
 }
 .order-chk:checked { background:var(--accent); border-color:var(--accent); }
 .order-chk:checked::after {
-  content:'✓'; position:absolute; top:-3px; left:1px;
-  font-size:13px; font-weight:800; color:#111; line-height:1;
+  content:'✓'; position:absolute; top:50%; left:50%;
+  transform:translate(-50%, -50%);
+  font-size:12px; font-weight:800; color:#111; line-height:1;
 }
 .order-id { font-size:.72rem; color:var(--text2); font-family:monospace; }
 .order-time { font-size:.7rem; color:var(--text2); }

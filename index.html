@@ -177,7 +177,17 @@ button:active { transform:scale(.97); }
 }
 .order-card:hover { border-color:rgba(245,166,35,.3); }
 .order-head { display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:8px; gap:8px; }
-.order-chk { accent-color:var(--accent); width:15px; height:15px; cursor:pointer; flex-shrink:0; margin-top:2px; }
+.order-chk {
+  appearance:none; -webkit-appearance:none;
+  width:17px; height:17px; flex-shrink:0; margin-top:1px; cursor:pointer;
+  border:2px solid var(--text2); border-radius:4px; background:var(--surf3);
+  position:relative; transition:background .15s, border-color .15s;
+}
+.order-chk:checked { background:var(--accent); border-color:var(--accent); }
+.order-chk:checked::after {
+  content:'✓'; position:absolute; top:-3px; left:1px;
+  font-size:13px; font-weight:800; color:#111; line-height:1;
+}
 .order-id { font-size:.72rem; color:var(--text2); font-family:monospace; }
 .order-time { font-size:.7rem; color:var(--text2); }
 .order-buyer { font-size:.92rem; font-weight:700; margin-bottom:4px; }

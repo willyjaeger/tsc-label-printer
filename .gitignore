@@ -6,6 +6,12 @@ build/
 # Config con IP guardada (cada PC tiene la suya)
 config.json
 
+# Datos locales de pedidos (cada PC tiene los suyos)
+orders.json
+
+# Claude Code settings locales
+.claude/settings.local.json
+
 # Python cache
 __pycache__/
 *.pyc

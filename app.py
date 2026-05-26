@@ -39,6 +39,8 @@ DEFAULT_CONFIG = {
     'label_gap_mm': 10,
     'media_type': 'gap',
     'dpi': 203,
+    'ml_label_type': 'standard',   # 'standard' = 100x150 (2 etiquetas) | 'combo' = 100x190 con troquel
+    'ml_die_cut_mm': 40,           # altura del troquel en mm (solo para combo)
     'ml_client_id': '',
     'ml_client_secret': '',
     'tn_client_id': '',
@@ -517,8 +519,7 @@ def _poll_worker():
                             }
                             corr = next_correlative()
                             order_data['correlative'] = corr
-                            payload = (_inject_correlative_into_zpl(zpl, corr)
-                                       + _build_detail_zpl(order_data, cfg))
+                            payload, _ = _print_ml_order(zpl, order_data, cfg)
                             send_to_printer(cfg['ip'], cfg['port'], payload)
                             _save_printed_order(order_data)
                             _push_event('auto_printed', {
@@ -1114,6 +1115,98 @@ def _build_detail_zpl(order_data, cfg):
     return ('\r\n'.join(lines) + '\r\n').encode('latin-1', errors='replace')
 
 
+def _build_combo_zpl(order_data, ml_zpl_bytes, cfg):
+    """
+    Etiqueta combo 100×190 mm con troquel:
+      - Top die_cut_mm: correlativo + items (sin barcode ni datos extra)
+      - Bottom label_height_mm: ZPL de ML desplazado die_cut_dots hacia abajo
+    Todo en un único ^XA...^XZ → una sola etiqueta física.
+    """
+    import re
+
+    dpi         = int(cfg.get('dpi', 203))
+    dpm         = dpi / 25.4
+    w           = round(float(cfg.get('label_width_mm',  100)) * dpm)
+    ship_h_mm   = float(cfg.get('label_height_mm', 150))
+    die_cut_mm  = float(cfg.get('ml_die_cut_mm', 40))
+    die_dots    = round(die_cut_mm * dpm)
+    total_dots  = round((ship_h_mm + die_cut_mm) * dpm)
+
+    correlative = order_data.get('correlative')
+    items       = order_data.get('items', [])
+    m = 20
+    y = 10
+    detail = []
+
+    # Correlativo compacto en el troquel
+    if correlative is not None:
+        detail.append(f'^FO{m},{y}^A0N,46,24^FD#{correlative:03d}^FS')
+        y += 54
+
+    # Items dentro del troquel
+    fh, fw   = 22, 10
+    line_h   = fh + 5
+    fld_w    = w - m * 2
+    cpl      = max(10, fld_w // fw)
+    for item in items:
+        if y > die_dots - line_h - 8:
+            detail.append(f'^FO{m},{y}^ADN,18,8^FD...^FS')
+            break
+        qty   = item.get('qty', 1)
+        title = _ascii_zpl(str(item.get('title', '')))
+        label = f'x{qty} {title}'
+        nl    = max(1, min(3, (len(label) + cpl - 1) // cpl))
+        detail.append(f'^FO{m},{y}^ADN,{fh},{fw}^FB{fld_w},{nl},4,L,0^FD{label}^FS')
+        y += nl * line_h + 4
+
+    # Línea separadora en el troquel
+    detail.append(f'^FO0,{die_dots - 3}^GB{w},3,3^FS')
+
+    # ── Procesar ZPL de ML ───────────────────────────────────────────────────
+    ml_str = ml_zpl_bytes.decode('latin-1', errors='replace')
+
+    # Extraer solo el cuerpo (entre ^XA y ^XZ del primer bloque)
+    body_match = re.search(r'\^XA(.*?)\^XZ', ml_str, re.DOTALL | re.IGNORECASE)
+    ml_body = body_match.group(1) if body_match else ml_str
+
+    # Eliminar directivas de tamaño — las reemplazamos con las nuestras
+    ml_body = re.sub(r'\^PW\d+', '', ml_body, flags=re.IGNORECASE)
+    ml_body = re.sub(r'\^LL\d+', '', ml_body, flags=re.IGNORECASE)
+    ml_body = re.sub(r'\^LT-?\d+', '', ml_body, flags=re.IGNORECASE)
+    ml_body = re.sub(r'\^MN[A-Z]', '', ml_body, flags=re.IGNORECASE)
+
+    # Desplazar todos los ^FO y-coords hacia abajo por die_dots
+    def shift_fo(m_):
+        return f'^FO{m_.group(1)},{int(m_.group(2)) + die_dots}'
+    ml_body = re.sub(r'\^FO(\d+),(\d+)', shift_fo, ml_body, flags=re.IGNORECASE)
+
+    # ── Ensamblar ZPL único ──────────────────────────────────────────────────
+    parts = ['^XA', f'^PW{w}', f'^LL{total_dots}', '^LT0']
+    parts.extend(detail)
+    parts.append(ml_body.strip())
+    parts.append('^XZ')
+
+    return ('\r\n'.join(parts) + '\r\n').encode('latin-1', errors='replace')
+
+
+def _print_ml_order(zpl_bytes, order_data, cfg):
+    """
+    Imprime una orden ML según el tipo de etiqueta configurado.
+    Devuelve (payload_bytes, labels_count).
+    """
+    label_type = cfg.get('ml_label_type', 'standard')
+    corr = order_data.get('correlative') or next_correlative()
+    order_data['correlative'] = corr
+
+    if label_type == 'combo':
+        payload = _build_combo_zpl(order_data, zpl_bytes, cfg)
+        return payload, 1
+    else:
+        payload = (_inject_correlative_into_zpl(zpl_bytes, corr)
+                   + _build_detail_zpl(order_data, cfg))
+        return payload, 2
+
+
 @app.route('/local/orders')
 def local_orders_endpoint():
     return jsonify({'ok': True, 'orders': load_orders()})
@@ -1224,11 +1317,10 @@ def ml_print(shipment_id):
             corr = next_correlative()
             order_data['shipment_id'] = str(shipment_id)
             order_data['correlative'] = corr
-            payload = _inject_correlative_into_zpl(zpl, corr) + _build_detail_zpl(order_data, cfg)
+            payload, n_labels = _print_ml_order(zpl, order_data, cfg)
         else:
-            payload = zpl
-
-        n_labels = count_labels(payload)
+            payload  = zpl
+            n_labels = count_labels(payload)
         send_to_printer(cfg['ip'], cfg['port'], payload)
         _save_printed_order(order_data)
         return jsonify({'ok': True, 'labels': n_labels})
@@ -1273,7 +1365,8 @@ def ml_print_all():
             if order.get('items'):
                 corr = next_correlative()
                 order['correlative'] = corr
-                combined += _inject_correlative_into_zpl(zpl, corr) + _build_detail_zpl(order, cfg)
+                chunk, _ = _print_ml_order(zpl, order, cfg)
+                combined += chunk
             else:
                 combined += zpl
             _save_printed_order(order)

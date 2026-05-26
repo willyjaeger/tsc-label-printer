@@ -456,6 +456,39 @@ footer { text-align:center; font-size:.7rem; color:var(--text2); margin-top:20px
     </div>
   </div>
 
+  <!-- Tipo de etiqueta ML -->
+  <div class="card" style="padding:12px 14px">
+    <div class="row" style="align-items:center;gap:16px;flex-wrap:wrap">
+      <div>
+        <label style="font-weight:600;font-size:.82rem">Tipo de etiqueta ML</label>
+        <div style="display:flex;gap:10px;margin-top:6px">
+          <label class="ap-chk-label" style="gap:8px;font-size:.85rem">
+            <input type="radio" name="mlLabelType" value="standard" id="lblTypeStandard" onchange="saveMlLabelType()" style="accent-color:var(--accent)">
+            <span>
+              <strong>100×150 mm</strong> — 2 etiquetas
+              <div style="font-size:.73rem;color:var(--text2)">Envío + detalle por separado</div>
+            </span>
+          </label>
+          <label class="ap-chk-label" style="gap:8px;font-size:.85rem">
+            <input type="radio" name="mlLabelType" value="combo" id="lblTypeCombo" onchange="saveMlLabelType()" style="accent-color:var(--accent)">
+            <span>
+              <strong>100×190 mm con troquel</strong> — 1 etiqueta
+              <div style="font-size:.73rem;color:var(--text2)">Detalle arriba (troquel) + envío abajo</div>
+            </span>
+          </label>
+        </div>
+      </div>
+      <div id="dieCutConfig" style="display:none">
+        <label style="font-size:.82rem">Alto del troquel</label>
+        <div style="display:flex;align-items:center;gap:6px;margin-top:4px">
+          <input type="number" id="dieCutMm" value="40" min="20" max="80" style="width:64px"
+                 onchange="saveMlLabelType()">
+          <span style="font-size:.82rem;color:var(--text2)">mm</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- Barra de auto-impresión (visible solo cuando conectado) -->
   <div id="autoprintBar" style="display:none"></div>
 
@@ -565,6 +598,11 @@ async function init() {
     document.getElementById('tnClientSecret').value  = c.tn_client_secret ?? '';
     cfgDpi           = c.dpi             ?? 203;
     cfgLabelHeightMm = c.label_height_mm ?? 150;
+    const labelType  = c.ml_label_type   ?? 'standard';
+    document.getElementById('lblTypeStandard').checked = labelType === 'standard';
+    document.getElementById('lblTypeCombo').checked    = labelType === 'combo';
+    document.getElementById('dieCutMm').value = c.ml_die_cut_mm ?? 40;
+    document.getElementById('dieCutConfig').style.display = labelType === 'combo' ? '' : 'none';
   } catch(e) {
     console.warn('config load error', e);
   }
@@ -610,6 +648,18 @@ async function saveConfig() {
     })
   });
   flashPill('savedPill');
+}
+
+async function saveMlLabelType() {
+  const type = document.querySelector('input[name="mlLabelType"]:checked')?.value ?? 'standard';
+  document.getElementById('dieCutConfig').style.display = type === 'combo' ? '' : 'none';
+  await fetch(API + '/config', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({
+      ml_label_type: type,
+      ml_die_cut_mm: parseFloat(document.getElementById('dieCutMm').value) || 40,
+    }),
+  });
 }
 
 async function saveCredentials() {

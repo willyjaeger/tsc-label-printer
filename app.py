@@ -1688,7 +1688,7 @@ def _run_tray():
     def open_browser(icon, item):
         webbrowser.open('http://localhost:5050')
 
-    def get_status(icon, item):
+    def get_status(item):
         with _poll_lock:
             enabled   = _poll['enabled']
             auto_p    = _poll['auto_print']
@@ -1698,7 +1698,7 @@ def _run_tray():
             s = int(time.time() - checked)
             ago = f' (hace {s}s)' if s < 60 else f' (hace {s//60}min)'
         if not enabled:
-            return f'Monitoreo: inactivo'
+            return 'Monitoreo: inactivo'
         return f'Monitoreo: activo{"  · Auto-imprimir" if auto_p else ""}{ago}'
 
     menu = pystray.Menu(

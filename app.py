@@ -454,6 +454,10 @@ def _poll_worker():
                                     'shipment_id': saved.get('shipment_id', ''),
                                     'buyer':       saved.get('buyer', ''),
                                 })
+                                tray_notify(
+                                    '⚠️ Posible cancelación',
+                                    f'Pedido #{oid} ({saved.get("buyer","")}) ya no está en ML — NO despachar',
+                                )
 
             with _poll_lock:
                 do_auto_print = _poll['auto_print']
@@ -465,7 +469,7 @@ def _poll_worker():
                     'initialized': True, 'count': len(printable),
                 })
             elif new_orders:
-                # Pedidos nuevos detectados → siempre notificar
+                # Pedidos nuevos detectados → siempre notificar (SSE + tray)
                 _push_event('new_orders', {
                     'count':      len(new_orders),
                     'checked_at': now,
@@ -474,6 +478,13 @@ def _poll_worker():
                                 'shipment_id': o.get('shipping', {}).get('id')}
                                for o in new_orders],
                 })
+                n = len(new_orders)
+                buyer_preview = ''
+                first_ship = new_orders[0].get('_shipment') or {}
+                buyer_preview = first_ship.get('receiver_name') or \
+                                (new_orders[0].get('buyer') or {}).get('nickname', '')
+                msg = f'{buyer_preview}' if n == 1 else f'{n} pedidos nuevos'
+                tray_notify('Pedido nuevo en ML', msg + ' — Hacé click para ver')
                 if do_auto_print:
                     for o in new_orders:
                         sid = o.get('shipping', {}).get('id')
@@ -1634,6 +1645,79 @@ def run_flask():
     app.run(host='127.0.0.1', port=5050, debug=False, use_reloader=False, threaded=True)
 
 
+# ── System tray ────────────────────────────────────────────────────────────────
+
+_tray_icon = None   # referencia global para notificaciones desde el poll worker
+
+
+def tray_notify(title, message):
+    """Muestra una notificación Windows nativa desde cualquier hilo."""
+    try:
+        if _tray_icon:
+            _tray_icon.notify(message, title)
+    except Exception:
+        pass
+
+
+def _make_tray_image():
+    """Crea el ícono de 64×64 px para la bandeja del sistema."""
+    from PIL import Image, ImageDraw
+    img  = Image.new('RGBA', (64, 64), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(img)
+    # Fondo redondeado naranja
+    draw.rounded_rectangle([0, 0, 63, 63], radius=14, fill='#f5a623')
+    # Cuerpo de impresora
+    draw.rounded_rectangle([10, 24, 54, 44], radius=4, fill='#1c1e26')
+    # Bandeja de papel (arriba)
+    draw.rounded_rectangle([16, 16, 48, 26], radius=2, fill='#1c1e26')
+    # Etiqueta saliendo (abajo)
+    draw.rounded_rectangle([18, 42, 46, 54], radius=2, fill='white')
+    # Líneas de código de barras en la etiqueta
+    for x in (22, 26, 30, 34, 38, 42):
+        draw.line([(x, 44), (x, 52)], fill='#333', width=2)
+    # Luz indicadora verde
+    draw.ellipse([44, 29, 51, 36], fill='#4caf88')
+    return img
+
+
+def _run_tray():
+    """Inicia el ícono en la bandeja del sistema (bloquea el hilo principal)."""
+    global _tray_icon
+    import pystray
+
+    def open_browser(icon, item):
+        webbrowser.open('http://localhost:5050')
+
+    def get_status(icon, item):
+        with _poll_lock:
+            enabled   = _poll['enabled']
+            auto_p    = _poll['auto_print']
+            checked   = _poll['checked_at']
+        ago = ''
+        if checked:
+            s = int(time.time() - checked)
+            ago = f' (hace {s}s)' if s < 60 else f' (hace {s//60}min)'
+        if not enabled:
+            return f'Monitoreo: inactivo'
+        return f'Monitoreo: activo{"  · Auto-imprimir" if auto_p else ""}{ago}'
+
+    menu = pystray.Menu(
+        pystray.MenuItem('Abrir panel de pedidos', open_browser, default=True),
+        pystray.Menu.SEPARATOR,
+        pystray.MenuItem(get_status, None, enabled=False),
+        pystray.Menu.SEPARATOR,
+        pystray.MenuItem('Salir', lambda icon, item: (icon.stop(), os._exit(0))),
+    )
+
+    _tray_icon = pystray.Icon(
+        name    = 'impresor-etiquetas',
+        icon    = _make_tray_image(),
+        title   = 'Impresor de Etiquetas',
+        menu    = menu,
+    )
+    _tray_icon.run()
+
+
 def start():
     threading.Thread(target=run_flask, daemon=True).start()
     threading.Thread(target=_poll_worker, daemon=True).start()
@@ -1641,43 +1725,17 @@ def start():
     webbrowser.open('http://localhost:5050')
 
     if getattr(sys, 'frozen', False):
-        _show_control_window()
+        _run_tray()
     else:
-        print("=" * 45)
-        print("  TSC Label Printer — http://localhost:5050")
+        print("=" * 50)
+        print("  Impresor de Etiquetas — http://localhost:5050")
         print("  Ctrl+C para cerrar")
-        print("=" * 45)
+        print("=" * 50)
         try:
             while True:
                 time.sleep(1)
         except KeyboardInterrupt:
             pass
-
-
-def _show_control_window():
-    import tkinter as tk
-    root = tk.Tk()
-    root.title("TSC Label Printer")
-    root.geometry("300x110")
-    root.resizable(False, False)
-    root.configure(bg='#1c1e26')
-
-    tk.Label(root, text="TSC Label Printer está corriendo",
-             bg='#1c1e26', fg='#e8e9ed', font=('Segoe UI', 10, 'bold')).pack(pady=(18, 4))
-    tk.Label(root, text="http://localhost:5050",
-             bg='#1c1e26', fg='#f5a623', font=('Segoe UI', 9)).pack(pady=(0, 10))
-
-    f = tk.Frame(root, bg='#1c1e26')
-    f.pack()
-    tk.Button(f, text="Abrir navegador", bg='#f5a623', fg='#111',
-              font=('Segoe UI', 9, 'bold'), bd=0, padx=12, pady=5, cursor='hand2',
-              relief='flat', command=lambda: webbrowser.open('http://localhost:5050')).pack(side='left', padx=4)
-    tk.Button(f, text="Cerrar", bg='#2a2d3a', fg='#8a8d9a',
-              font=('Segoe UI', 9), bd=0, padx=12, pady=5, cursor='hand2',
-              relief='flat', command=lambda: os._exit(0)).pack(side='left', padx=4)
-
-    root.protocol("WM_DELETE_WINDOW", lambda: os._exit(0))
-    root.mainloop()
 
 
 if __name__ == '__main__':

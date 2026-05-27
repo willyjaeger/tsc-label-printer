@@ -430,6 +430,34 @@ footer { text-align:center; font-size:.7rem; color:var(--text2); margin-top:20px
     </div>
   </div>
 
+  <!-- Tipo de etiqueta ML -->
+  <div class="card" style="padding:12px 14px">
+    <div style="font-size:.71rem;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--text2);margin-bottom:10px">Tipo de etiqueta MercadoLibre</div>
+    <div style="display:flex;gap:10px;flex-wrap:wrap">
+      <label class="ap-chk-label" style="gap:8px;font-size:.85rem">
+        <input type="radio" name="mlLabelType" value="standard" id="lblTypeStandard" onchange="saveMlLabelType()">
+        <span>
+          <strong>100×150 mm</strong> — 2 etiquetas
+          <div style="font-size:.73rem;color:var(--text2)">Envío + detalle por separado</div>
+        </span>
+      </label>
+      <label class="ap-chk-label" style="gap:8px;font-size:.85rem">
+        <input type="radio" name="mlLabelType" value="combo" id="lblTypeCombo" onchange="saveMlLabelType()">
+        <span>
+          <strong>100×190 mm con troquel</strong> — 1 etiqueta
+          <div style="font-size:.73rem;color:var(--text2)">Detalle arriba (troquel) + envío abajo</div>
+        </span>
+      </label>
+    </div>
+    <div id="dieCutConfig" style="display:none;margin-top:10px">
+      <label>Alto del troquel</label>
+      <div style="display:flex;align-items:center;gap:6px;margin-top:4px">
+        <input type="number" id="dieCutMm" value="40" min="20" max="80" style="width:64px" onchange="saveMlLabelType()">
+        <span style="font-size:.82rem;color:var(--text2)">mm</span>
+      </div>
+    </div>
+  </div>
+
 </div><!-- /tab-print -->
 
 
@@ -452,39 +480,6 @@ footer { text-align:center; font-size:.7rem; color:var(--text2); margin-top:20px
         </button>
         <div class="hint" style="margin-top:10px">
           Crear la app en <strong>developers.mercadolibre.com.ar</strong> · Redirect URI: <code style="background:var(--surf3);padding:1px 5px;border-radius:3px;font-size:.78rem">http://localhost:5050/auth/callback</code>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <!-- Tipo de etiqueta ML -->
-  <div class="card" style="padding:12px 14px">
-    <div class="row" style="align-items:center;gap:16px;flex-wrap:wrap">
-      <div>
-        <label style="font-weight:600;font-size:.82rem">Tipo de etiqueta ML</label>
-        <div style="display:flex;gap:10px;margin-top:6px">
-          <label class="ap-chk-label" style="gap:8px;font-size:.85rem">
-            <input type="radio" name="mlLabelType" value="standard" id="lblTypeStandard" onchange="saveMlLabelType()">
-            <span>
-              <strong>100×150 mm</strong> — 2 etiquetas
-              <div style="font-size:.73rem;color:var(--text2)">Envío + detalle por separado</div>
-            </span>
-          </label>
-          <label class="ap-chk-label" style="gap:8px;font-size:.85rem">
-            <input type="radio" name="mlLabelType" value="combo" id="lblTypeCombo" onchange="saveMlLabelType()">
-            <span>
-              <strong>100×190 mm con troquel</strong> — 1 etiqueta
-              <div style="font-size:.73rem;color:var(--text2)">Detalle arriba (troquel) + envío abajo</div>
-            </span>
-          </label>
-        </div>
-      </div>
-      <div id="dieCutConfig" style="display:none">
-        <label style="font-size:.82rem">Alto del troquel</label>
-        <div style="display:flex;align-items:center;gap:6px;margin-top:4px">
-          <input type="number" id="dieCutMm" value="40" min="20" max="80" style="width:64px"
-                 onchange="saveMlLabelType()">
-          <span style="font-size:.82rem;color:var(--text2)">mm</span>
         </div>
       </div>
     </div>

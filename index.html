@@ -942,7 +942,7 @@ function ecStatusInfo(status, substatus) {
 function renderEnCaminoArea(content) {
   // Solo pedidos que el correo/moto ya retiró. Los impresos sin retirar siguen en Despachar.
   const enCamino = localOrders
-    .filter(o => o.shipment_status === 'shipped' || o.shipment_status === 'delivered' || o.shipment_status === 'not_delivered')
+    .filter(o => o.shipment_status === 'shipped' || o.shipment_status === 'delivered' || o.shipment_status === 'not_delivered' || o.shipment_status === 'handling')
     .sort((a, b) => {
       const order = ['shipped','delivered','not_delivered'];
       return (order.indexOf(a.shipment_status) - order.indexOf(b.shipment_status));
@@ -1009,7 +1009,7 @@ async function loadOrdersIfReady() {
     if (d.ok) {
       cacheOrders(d.orders);
       ordersData = d.orders;
-      renderOrdersArea();
+      await loadLocalOrders();      // refresca En camino con estados actualizados de ML
       seedLocalOrdersFromCache();   // migra pedidos viejos del browser a orders.json
     } else renderOrdersArea(false, d.error);
   } catch(e) {
@@ -1102,7 +1102,7 @@ function toggleSelectOrder(shipId, checked) {
   if (toolbar) {
     const pendingOrders = ordersData.filter(o => {
       const ss = o._shipment?.status;
-      return ss !== 'shipped' && ss !== 'delivered';
+      return ss !== 'shipped' && ss !== 'delivered' && ss !== 'handling';
     });
     const unprintedIds = pendingOrders.map(o => o.shipping?.id).filter(id => id && !isPrinted(id));
     const selCount = [...selectedShipIds].filter(id =>
@@ -1119,7 +1119,7 @@ function toggleSelectOrder(shipId, checked) {
 async function printSelected() {
   const pendingOrders = ordersData.filter(o => {
     const ss = o._shipment?.status;
-    return ss !== 'shipped' && ss !== 'delivered';
+    return ss !== 'shipped' && ss !== 'delivered' && ss !== 'handling';
   });
   const orders = pendingOrders
     .filter(o => o.shipping?.id && selectedShipIds.has(String(o.shipping.id)))
@@ -1172,7 +1172,7 @@ function renderOrdersArea(loading = false, errorMsg = null) {
 
   const nick = mlUser.nickname ?? `Usuario #${mlUser.user_id}`;
 
-  const ecCount = localOrders.filter(o => o.shipment_status === 'shipped' || o.shipment_status === 'delivered' || o.shipment_status === 'not_delivered').length;
+  const ecCount = localOrders.filter(o => o.shipment_status === 'shipped' || o.shipment_status === 'delivered' || o.shipment_status === 'not_delivered' || o.shipment_status === 'handling').length;
   let content = `
     <div class="ml-status">
       <div>
@@ -1229,7 +1229,7 @@ function renderOrdersArea(loading = false, errorMsg = null) {
   // Todos ya fueron despachados (shipped) — están en En camino
   const _preCheck = ordersData.filter(o => {
     const ss = o._shipment?.status;
-    return ss !== 'shipped' && ss !== 'delivered';
+    return ss !== 'shipped' && ss !== 'delivered' && ss !== 'handling';
   });
   if (!_preCheck.length) {
     content += `
@@ -1251,7 +1251,7 @@ function renderOrdersArea(loading = false, errorMsg = null) {
   // Lo que importa es _shipment.status: si es 'shipped' o 'delivered', ya lo retiraron.
   const pendingOrders = ordersData.filter(o => {
     const ss = o._shipment?.status;
-    return ss !== 'shipped' && ss !== 'delivered';
+    return ss !== 'shipped' && ss !== 'delivered' && ss !== 'handling';
   });
   const isFlexType      = t => t === 'me2' || t === 'xd_drop_off' || t === 'self_service';
   const isCorrType      = t => t === 'cross_docking';

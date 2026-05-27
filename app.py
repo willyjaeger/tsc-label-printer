@@ -450,7 +450,7 @@ def _poll_worker():
                         oid = saved.get('order_id')
                         if oid and int(oid) in disappeared:
                             ship_st = saved.get('shipment_status', '')
-                            if ship_st not in ('shipped', 'delivered', 'not_delivered'):
+                            if ship_st not in ('shipped', 'delivered', 'not_delivered', 'handling'):
                                 _push_event('possible_cancel', {
                                     'order_id':    str(oid),
                                     'shipment_id': saved.get('shipment_id', ''),
@@ -1213,7 +1213,15 @@ def _print_ml_order(zpl_bytes, order_data, cfg):
 
 @app.route('/local/orders')
 def local_orders_endpoint():
-    return jsonify({'ok': True, 'orders': load_orders()})
+    token = get_valid_token()
+    if token:
+        try:
+            orders = _sync_orders_in_transit(token)
+        except Exception:
+            orders = load_orders()
+    else:
+        orders = load_orders()
+    return jsonify({'ok': True, 'orders': orders})
 
 
 @app.route('/local/import', methods=['POST'])

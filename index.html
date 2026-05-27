@@ -406,6 +406,31 @@ footer { text-align:center; font-size:.7rem; color:var(--text2); margin-top:20px
           ⚠️ Auto-calibrar avanza etiquetas para detectar el gap y luego retrocede el papel automáticamente.
         </div>
 
+        <!-- ── Medidas de etiqueta ── -->
+        <div style="margin-top:16px;padding-top:14px;border-top:1px solid var(--border)">
+          <div style="font-size:.71rem;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--text2);margin-bottom:10px">Medidas de etiqueta</div>
+          <div class="row">
+            <div class="f1"><label>Alto (mm)</label><input type="number" id="labelHeight" value="150" min="10" max="400" step="0.5"></div>
+            <div class="f1"><label>Ancho (mm)</label><input type="number" id="labelWidth" value="100" min="10" max="200" step="0.5"></div>
+            <div class="f1"><label>Gap (mm)</label><input type="number" id="labelGap" value="3" min="0.5" max="30" step="0.5"></div>
+            <div><label>&nbsp;</label><button class="btn-s btn-sm" onclick="applyCalibration(this)">Guardar ↵</button></div>
+          </div>
+          <div class="row" style="margin-top:8px">
+            <div class="f1">
+              <label>DPI</label>
+              <select id="dpi"><option value="203">203 dpi</option><option value="300">300 dpi</option><option value="600">600 dpi</option></select>
+            </div>
+            <div class="f1">
+              <label>Media</label>
+              <select id="mediaType"><option value="gap">Gap</option><option value="mark">Mark</option><option value="continuous">Continuous</option></select>
+            </div>
+            <div class="f1">
+              <label>Backfeed (dots)</label>
+              <input type="number" id="backfeedDots" value="0" min="0">
+            </div>
+          </div>
+        </div>
+
         <!-- ── Retroceder papel ── -->
         <div style="margin-top:16px;padding-top:14px;border-top:1px solid var(--border)">
           <div style="font-size:.71rem;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--text2);margin-bottom:10px">Retroceder papel</div>
@@ -594,6 +619,12 @@ async function init() {
     document.getElementById('tnClientSecret').value  = c.tn_client_secret ?? '';
     cfgDpi           = c.dpi             ?? 203;
     cfgLabelHeightMm = c.label_height_mm ?? 150;
+    document.getElementById('labelHeight').value  = c.label_height_mm ?? 150;
+    document.getElementById('labelWidth').value   = c.label_width_mm  ?? 100;
+    document.getElementById('labelGap').value     = c.label_gap_mm    ?? 3;
+    document.getElementById('dpi').value          = c.dpi             ?? 203;
+    document.getElementById('mediaType').value    = c.media_type      ?? 'gap';
+    document.getElementById('backfeedDots').value = c.backfeed_dots   ?? 0;
     const labelType  = c.ml_label_type   ?? 'standard';
     document.getElementById('lblTypeStandard').checked = labelType === 'standard';
     document.getElementById('lblTypeCombo').checked    = labelType === 'combo';
@@ -777,21 +808,29 @@ function setPrintStatus(type, msg) {
 }
 
 // ── Calibración ───────────────────────────────────────
-async function applyCalibration() {
+async function applyCalibration(btn) {
   const cfg = {
-    media_type: document.getElementById('mediaType').value,
-    dpi: parseInt(document.getElementById('dpi').value),
+    media_type:      document.getElementById('mediaType').value,
+    dpi:             parseInt(document.getElementById('dpi').value),
     label_height_mm: parseFloat(document.getElementById('labelHeight').value),
     label_width_mm:  parseFloat(document.getElementById('labelWidth').value),
-    backfeed_dots: parseInt(document.getElementById('backfeedDots').value),
+    label_gap_mm:    parseFloat(document.getElementById('labelGap').value),
+    backfeed_dots:   parseInt(document.getElementById('backfeedDots').value),
   };
-  setCalStatus('loading', 'Enviando calibración…');
+  if (btn) btn.disabled = true;
+  setCalStatus('loading', 'Guardando y enviando calibración…');
   try {
     const r = await fetch(API + '/calibrate', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(cfg) });
     const d = await r.json();
-    if (d.ok) setCalStatus('ok', `✓ Aplicada — ${d.dots.height} dots alto, backfeed ${d.dots.backfeed} dots`);
-    else setCalStatus('err', '✗ ' + d.error);
+    if (d.ok) {
+      cfgLabelHeightMm = cfg.label_height_mm;
+      cfgDpi = cfg.dpi;
+      setCalStatus('ok', `✓ Guardado — ${cfg.label_height_mm}×${cfg.label_width_mm} mm · gap ${cfg.label_gap_mm} mm · ${d.dots.height} dots`);
+    } else {
+      setCalStatus('err', '✗ ' + d.error);
+    }
   } catch(e) { setCalStatus('err', e.message); }
+  if (btn) btn.disabled = false;
 }
 
 async function testPrint() {
@@ -812,9 +851,11 @@ async function runAutoCal(btn) {
     const r = await fetch(API + '/autocal', { method:'POST' });
     const d = await r.json();
     if (d.ok) {
-      const gapInfo = d.gap_source === 'config'
-        ? `gap ${d.gap_mm} mm (configurado)`
-        : `gap ${d.gap_mm} mm detectado automáticamente`;
+      const detected = d.gap_source !== 'config';
+      if (detected) document.getElementById('labelGap').value = d.gap_mm;
+      const gapInfo = detected
+        ? `gap ${d.gap_mm} mm detectado automáticamente`
+        : `gap ${d.gap_mm} mm (de config)`;
       setCalStatus('ok', `✓ Calibrado — ${gapInfo} — retrocedió ${d.backfeed_dots} dots`);
       toast(`✓ Calibrado · gap ${d.gap_mm} mm`, 'ok');
     } else {

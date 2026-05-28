@@ -658,32 +658,60 @@ def calibrate():
         return jsonify({'ok': False, 'error': str(e)}), 500
 
 
+def _query_size(ip, port):
+    """
+    Consulta el tamaño de etiqueta y gap configurados en la impresora TSC.
+    Intenta QUERY SIZE (TSPL) y ~HS (ZPL). Devuelve (width_mm, height_mm, gap_mm) o Nones.
+    """
+    import re
+
+    # Intento 1: QUERY SIZE (TSPL — respuesta texto)
+    raw = query_printer(ip, port, 'QUERY SIZE\r\n', read_bytes=128, timeout=3)
+    if raw:
+        text = raw.decode('ascii', errors='ignore').strip()
+        # Formatos posibles: "4.00 5.91 0.12" o "4.00 5.91" (pulgadas)
+        # o "101.6 mm, 152.4 mm, 3.0 mm" (mm)
+        nums_mm = re.findall(r'(\d+\.?\d*)\s*mm', text, re.IGNORECASE)
+        if len(nums_mm) >= 2:
+            w = round(float(nums_mm[0]), 1)
+            h = round(float(nums_mm[1]), 1)
+            g = round(float(nums_mm[2]), 1) if len(nums_mm) >= 3 else None
+            return w, h, g, text
+        nums = re.findall(r'\d+\.?\d+', text)
+        if len(nums) >= 2:
+            # Asumimos pulgadas si los valores son < 30
+            vals = [float(n) for n in nums[:3]]
+            if vals[0] < 30:  # pulgadas
+                w = round(vals[0] * 25.4, 1)
+                h = round(vals[1] * 25.4, 1)
+                g = round(vals[2] * 25.4, 1) if len(vals) >= 3 else None
+            else:             # ya en mm
+                w = round(vals[0], 1)
+                h = round(vals[1], 1)
+                g = round(vals[2], 1) if len(vals) >= 3 else None
+            return w, h, g, text
+
+    return None, None, None, None
+
+
 @app.route('/printer/hs')
 def printer_hs():
-    """Devuelve la respuesta cruda de ~HS para diagnóstico."""
+    """Diagnóstico: muestra respuesta cruda de QUERY SIZE y ~HS."""
     cfg = load_config()
-    raw = query_printer(cfg['ip'], cfg['port'], '~HS', read_bytes=256, timeout=5)
-    if raw is None:
-        return jsonify({'ok': False, 'error': 'Sin respuesta de la impresora'})
-    hex_str  = raw.hex()
-    hex_dump = ' '.join(hex_str[i:i+2] for i in range(0, len(hex_str), 2))
-    # Intentar parsear para mostrar paquetes STX/ETX
-    packets = []
-    i = 0
-    while i < len(raw):
-        if raw[i] == 0x02:
-            end = raw.find(0x03, i + 1)
-            if end != -1:
-                pkt = raw[i+1:end]
-                packets.append({
-                    'hex':   ' '.join(f'{b:02x}' for b in pkt),
-                    'bytes': list(pkt),
-                    'len':   len(pkt),
-                })
-                i = end + 1
-                continue
-        i += 1
-    return jsonify({'ok': True, 'raw_hex': hex_dump, 'length': len(raw), 'packets': packets})
+    ip, port = cfg['ip'], cfg['port']
+
+    qs_raw = query_printer(ip, port, 'QUERY SIZE\r\n', read_bytes=128, timeout=3)
+    hs_raw = query_printer(ip, port, '~HS', read_bytes=256, timeout=3)
+
+    def hex_dump(b):
+        return ' '.join(f'{x:02x}' for x in b) if b else '(sin respuesta)'
+
+    return jsonify({
+        'ok': True,
+        'query_size': qs_raw.decode('ascii', errors='replace').strip() if qs_raw else None,
+        'hs_hex': hex_dump(hs_raw),
+        'hs_len': len(hs_raw) if hs_raw else 0,
+    })
 
 
 @app.route('/autocal', methods=['POST'])
@@ -697,9 +725,12 @@ def autocal():
         send_to_printer(cfg['ip'], cfg['port'], '~JC')
         time.sleep(5)  # esperar que la impresora termine la calibración
 
-        # Leer largo de etiqueta y gap desde ~HS (valores medidos por la impresora)
-        hs = query_printer(cfg['ip'], cfg['port'], '~HS', read_bytes=128, timeout=3)
-        height_mm_read, gap_mm_read = parse_hs_dimensions(hs)
+        # Leer dimensiones reales de la impresora post-calibración
+        w_read, h_read, g_read, raw_text = _query_size(cfg['ip'], cfg['port'])
+
+        width_mm_read  = w_read
+        height_mm_read = h_read
+        gap_mm_read    = g_read
 
         if gap_mm_read is not None:
             gap_mm     = gap_mm_read
@@ -714,16 +745,20 @@ def autocal():
             height_dots = round(height_mm * dpi / 25.4)
             cfg['label_height_mm'] = height_mm
 
+        if width_mm_read is not None:
+            cfg['label_width_mm'] = width_mm_read
+
         save_config(cfg)
 
         gap_dots      = round(gap_mm * dpi / 25.4)
         backfeed_dots = (height_dots + gap_dots) * 3
         send_to_printer(cfg['ip'], cfg['port'], f'BACKFEED {backfeed_dots}\r\n'.encode())
         return jsonify({
-            'ok':           True,
-            'gap_mm':       gap_mm,
-            'gap_source':   gap_source,
-            'height_mm':    height_mm if height_mm_read is not None else None,
+            'ok':            True,
+            'gap_mm':        gap_mm,
+            'gap_source':    gap_source,
+            'height_mm':     height_mm_read,
+            'width_mm':      width_mm_read,
             'backfeed_dots': backfeed_dots,
         })
     except socket.timeout:

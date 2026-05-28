@@ -845,19 +845,17 @@ async function testPrint() {
 
 async function readHsRaw(btn) {
   btn.disabled = true;
-  setCalStatus('loading', 'Leyendo ~HS…');
+  setCalStatus('loading', 'Consultando impresora…');
   try {
     const r = await fetch(API + '/printer/hs');
     const d = await r.json();
     if (!d.ok) { setCalStatus('err', '✗ ' + d.error); return; }
-    let msg = `~HS raw (${d.length} bytes): ${d.raw_hex}`;
-    if (d.packets.length) {
-      d.packets.forEach((p, i) => {
-        msg += `\nPaquete ${i+1} (${p.len} bytes): ${p.hex}`;
-      });
-    }
-    setCalStatus('ok', msg.split('\n')[0]);
-    console.log('~HS completo:\n' + msg);
+    const msg = [
+      `QUERY SIZE → ${d.query_size ?? '(sin respuesta)'}`,
+      `~HS hex (${d.hs_len}b) → ${d.hs_hex}`,
+    ].join('\n');
+    setCalStatus('ok', `QUERY SIZE: ${d.query_size ?? 'sin resp'}`);
+    console.log(msg);
     alert(msg);
   } catch(e) { setCalStatus('err', e.message); }
   btn.disabled = false;
@@ -872,17 +870,15 @@ async function runAutoCal(btn) {
     const r = await fetch(API + '/autocal', { method:'POST' });
     const d = await r.json();
     if (d.ok) {
-      const detectedGap    = d.gap_source !== 'config';
-      const detectedHeight = d.height_mm != null;
-      if (detectedGap)    document.getElementById('labelGap').value    = d.gap_mm;
-      if (detectedHeight) document.getElementById('labelHeight').value = d.height_mm;
-      const parts = [];
-      if (detectedHeight) parts.push(`alto ${d.height_mm} mm ✓`);
-      else                parts.push(`alto (no leído)`);
-      if (detectedGap)    parts.push(`gap ${d.gap_mm} mm ✓`);
-      else                parts.push(`gap ${d.gap_mm} mm (config)`);
-      setCalStatus('ok', `✓ Calibrado — ${parts.join(' · ')} — retrocedió ${d.backfeed_dots} dots`);
-      toast(`✓ Calibrado · ${parts.join(' · ')}`, 'ok');
+      if (d.height_mm != null) document.getElementById('labelHeight').value = d.height_mm;
+      if (d.width_mm  != null) document.getElementById('labelWidth').value  = d.width_mm;
+      if (d.gap_source !== 'config') document.getElementById('labelGap').value = d.gap_mm;
+      const measured = d.height_mm != null && d.gap_source !== 'config';
+      const info = measured
+        ? `${d.height_mm}×${d.width_mm ?? '?'} mm · gap ${d.gap_mm} mm — leídos de la impresora`
+        : `gap ${d.gap_mm} mm (${d.gap_source}) · alto no leído — ingresalo manualmente`;
+      setCalStatus('ok', `✓ Calibrado — ${info} — retrocedió ${d.backfeed_dots} dots`);
+      toast(`✓ Calibrado · ${info}`, 'ok');
     } else {
       setCalStatus('err', '✗ ' + d.error);
       toast('✗ ' + d.error, 'err');

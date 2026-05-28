@@ -401,6 +401,7 @@ footer { text-align:center; font-size:.7rem; color:var(--text2); margin-top:20px
         <div class="cal-actions">
           <button class="btn-s btn-sm" onclick="testPrint()">Imprimir test</button>
           <button class="btn-d btn-sm" onclick="runAutoCal(this)">Auto-calibrar (~JC) ⚠️</button>
+          <button class="btn-s btn-sm" onclick="readHsRaw(this)" title="Ver respuesta cruda ~HS de la impresora">🔍 Leer ~HS</button>
         </div>
         <div class="hint" style="margin-top:10px;padding:9px 11px;background:rgba(224,85,85,.07);border-radius:6px;border-left:2px solid rgba(224,85,85,.3)">
           ⚠️ Auto-calibrar avanza etiquetas para detectar el gap y luego retrocede el papel automáticamente.
@@ -840,6 +841,26 @@ async function testPrint() {
     const d = await r.json();
     d.ok ? setCalStatus('ok', '✓ Test enviado') : setCalStatus('err', '✗ ' + d.error);
   } catch(e) { setCalStatus('err', e.message); }
+}
+
+async function readHsRaw(btn) {
+  btn.disabled = true;
+  setCalStatus('loading', 'Leyendo ~HS…');
+  try {
+    const r = await fetch(API + '/printer/hs');
+    const d = await r.json();
+    if (!d.ok) { setCalStatus('err', '✗ ' + d.error); return; }
+    let msg = `~HS raw (${d.length} bytes): ${d.raw_hex}`;
+    if (d.packets.length) {
+      d.packets.forEach((p, i) => {
+        msg += `\nPaquete ${i+1} (${p.len} bytes): ${p.hex}`;
+      });
+    }
+    setCalStatus('ok', msg.split('\n')[0]);
+    console.log('~HS completo:\n' + msg);
+    alert(msg);
+  } catch(e) { setCalStatus('err', e.message); }
+  btn.disabled = false;
 }
 
 async function runAutoCal(btn) {

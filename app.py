@@ -658,6 +658,34 @@ def calibrate():
         return jsonify({'ok': False, 'error': str(e)}), 500
 
 
+@app.route('/printer/hs')
+def printer_hs():
+    """Devuelve la respuesta cruda de ~HS para diagnóstico."""
+    cfg = load_config()
+    raw = query_printer(cfg['ip'], cfg['port'], '~HS', read_bytes=256, timeout=5)
+    if raw is None:
+        return jsonify({'ok': False, 'error': 'Sin respuesta de la impresora'})
+    hex_str  = raw.hex()
+    hex_dump = ' '.join(hex_str[i:i+2] for i in range(0, len(hex_str), 2))
+    # Intentar parsear para mostrar paquetes STX/ETX
+    packets = []
+    i = 0
+    while i < len(raw):
+        if raw[i] == 0x02:
+            end = raw.find(0x03, i + 1)
+            if end != -1:
+                pkt = raw[i+1:end]
+                packets.append({
+                    'hex':   ' '.join(f'{b:02x}' for b in pkt),
+                    'bytes': list(pkt),
+                    'len':   len(pkt),
+                })
+                i = end + 1
+                continue
+        i += 1
+    return jsonify({'ok': True, 'raw_hex': hex_dump, 'length': len(raw), 'packets': packets})
+
+
 @app.route('/autocal', methods=['POST'])
 def autocal():
     cfg = load_config()

@@ -697,21 +697,24 @@ def _query_size(ip, port):
 @app.route('/printer/hs')
 def printer_hs():
     """Diagnóstico: muestra respuesta cruda de QUERY SIZE y ~HS."""
-    cfg = load_config()
-    ip, port = cfg['ip'], cfg['port']
+    try:
+        cfg = load_config()
+        ip, port = cfg.get('ip', ''), int(cfg.get('port', 9100))
 
-    qs_raw = query_printer(ip, port, 'QUERY SIZE\r\n', read_bytes=128, timeout=3)
-    hs_raw = query_printer(ip, port, '~HS', read_bytes=256, timeout=3)
+        qs_raw = query_printer(ip, port, 'QUERY SIZE\r\n', read_bytes=128, timeout=3)
+        hs_raw = query_printer(ip, port, '~HS', read_bytes=256, timeout=3)
 
-    def hex_dump(b):
-        return ' '.join(f'{x:02x}' for x in b) if b else '(sin respuesta)'
+        def hex_dump(b):
+            return ' '.join(f'{x:02x}' for x in b) if b else '(sin respuesta)'
 
-    return jsonify({
-        'ok': True,
-        'query_size': qs_raw.decode('ascii', errors='replace').strip() if qs_raw else None,
-        'hs_hex': hex_dump(hs_raw),
-        'hs_len': len(hs_raw) if hs_raw else 0,
-    })
+        return jsonify({
+            'ok': True,
+            'query_size': qs_raw.decode('ascii', errors='replace').strip() if qs_raw else None,
+            'hs_hex': hex_dump(hs_raw),
+            'hs_len': len(hs_raw) if hs_raw else 0,
+        })
+    except Exception as e:
+        return jsonify({'ok': False, 'error': str(e)})
 
 
 @app.route('/autocal', methods=['POST'])

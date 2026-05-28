@@ -252,41 +252,50 @@ def query_printer(ip, port, cmd, read_bytes=512, timeout=5):
         s.close()
 
 
-def parse_hs_dimensions(hs_response):
+def parse_hs_dimensions(hs_response, dpi=203):
     """
-    Parsea la respuesta ~HS del TSC. Devuelve (height_mm, gap_mm); cada uno puede ser None.
-    El ~HS devuelve 3 paquetes STX...ETX. En el segundo paquete (valores en 1/100 pulgada, LE):
-      bytes 4-5 = largo de etiqueta, bytes 8-9 = gap.
+    Parsea la respuesta ASCII de ~HS del TSC (paquetes STX...ETX con campos CSV).
+    Paquete 1, campo 3 (0-idx) = pitch total (etiqueta+gap) en dots.
+    Paquete 2, campo 4 (0-idx) = gap en mm.
+    Devuelve (height_mm, gap_mm); cada uno puede ser None.
     """
-    if not hs_response or len(hs_response) < 20:
+    if not hs_response:
         return None, None
+    import re
     try:
-        packets = []
-        i = 0
-        while i < len(hs_response):
-            if hs_response[i] == 0x02:
-                end = hs_response.find(0x03, i + 1)
-                if end != -1:
-                    packets.append(hs_response[i+1:end])
-                    i = end + 1
-                    continue
-            i += 1
+        text    = hs_response.decode('ascii', errors='ignore')
+        packets = re.findall(r'\x02([^\x03]*)\x03', text)
+        if not packets:
+            return None, None
+
+        height_mm = None
+        gap_mm    = None
+
+        # Paquete 1, campo 3 = pitch total en dots
+        pkt1 = packets[0].split(',')
+        if len(pkt1) >= 4:
+            pitch_dots = int(pkt1[3].strip())
+            if pitch_dots > 0:
+                pitch_mm = pitch_dots * 25.4 / dpi
+                height_mm = pitch_mm   # se ajusta restando gap abajo
+
+        # Paquete 2, campo 4 = gap en mm
         if len(packets) >= 2:
-            pkt = packets[1]
-            height_mm = None
-            gap_mm    = None
-            if len(pkt) >= 6:
-                h = int.from_bytes(pkt[4:6], 'little') * 25.4 / 100
-                if 20.0 <= h <= 400.0:
-                    height_mm = round(h, 1)
-            if len(pkt) >= 10:
-                g = int.from_bytes(pkt[8:10], 'little') * 25.4 / 100
-                if 1.0 <= g <= 30.0:
+            pkt2 = packets[1].split(',')
+            if len(pkt2) >= 5:
+                g = float(pkt2[4].strip())
+                if 1.0 <= g <= 20.0:
                     gap_mm = round(g, 1)
-            return height_mm, gap_mm
+
+        # Largo etiqueta = pitch total − gap
+        if height_mm is not None:
+            height_mm = round(height_mm - (gap_mm or 0), 1)
+            if not (20.0 <= height_mm <= 400.0):
+                height_mm = None
+
+        return height_mm, gap_mm
     except Exception:
-        pass
-    return None, None
+        return None, None
 
 def parse_hs_gap(hs_response):
     _, gap = parse_hs_dimensions(hs_response)
@@ -728,12 +737,10 @@ def autocal():
         send_to_printer(cfg['ip'], cfg['port'], '~JC')
         time.sleep(5)  # esperar que la impresora termine la calibración
 
-        # Leer dimensiones reales de la impresora post-calibración
-        w_read, h_read, g_read, raw_text = _query_size(cfg['ip'], cfg['port'])
-
-        width_mm_read  = w_read
-        height_mm_read = h_read
-        gap_mm_read    = g_read
+        # Leer dimensiones reales desde ~HS post-calibración
+        hs = query_printer(cfg['ip'], cfg['port'], '~HS', read_bytes=256, timeout=3)
+        height_mm_read, gap_mm_read = parse_hs_dimensions(hs, dpi=dpi)
+        width_mm_read = None   # ~HS no reporta ancho
 
         if gap_mm_read is not None:
             gap_mm     = gap_mm_read

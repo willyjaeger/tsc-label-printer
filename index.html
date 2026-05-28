@@ -851,13 +851,17 @@ async function runAutoCal(btn) {
     const r = await fetch(API + '/autocal', { method:'POST' });
     const d = await r.json();
     if (d.ok) {
-      const detected = d.gap_source !== 'config';
-      if (detected) document.getElementById('labelGap').value = d.gap_mm;
-      const gapInfo = detected
-        ? `gap ${d.gap_mm} mm detectado automáticamente`
-        : `gap ${d.gap_mm} mm (de config)`;
-      setCalStatus('ok', `✓ Calibrado — ${gapInfo} — retrocedió ${d.backfeed_dots} dots`);
-      toast(`✓ Calibrado · gap ${d.gap_mm} mm`, 'ok');
+      const detectedGap    = d.gap_source !== 'config';
+      const detectedHeight = d.height_mm != null;
+      if (detectedGap)    document.getElementById('labelGap').value    = d.gap_mm;
+      if (detectedHeight) document.getElementById('labelHeight').value = d.height_mm;
+      const parts = [];
+      if (detectedHeight) parts.push(`alto ${d.height_mm} mm ✓`);
+      else                parts.push(`alto (no leído)`);
+      if (detectedGap)    parts.push(`gap ${d.gap_mm} mm ✓`);
+      else                parts.push(`gap ${d.gap_mm} mm (config)`);
+      setCalStatus('ok', `✓ Calibrado — ${parts.join(' · ')} — retrocedió ${d.backfeed_dots} dots`);
+      toast(`✓ Calibrado · ${parts.join(' · ')}`, 'ok');
     } else {
       setCalStatus('err', '✗ ' + d.error);
       toast('✗ ' + d.error, 'err');

@@ -252,17 +252,15 @@ def query_printer(ip, port, cmd, read_bytes=512, timeout=5):
         s.close()
 
 
-def parse_hs_gap(hs_response):
+def parse_hs_dimensions(hs_response):
     """
-    Parsea la respuesta ~HS del TSC para extraer el gap detectado.
-    El ~HS devuelve 3 paquetes STX...ETX. El gap está en el segundo paquete,
-    bytes 8-9 (little-endian, en dots de 1/100 pulgada).
-    Devuelve gap en mm o None si no se puede parsear.
+    Parsea la respuesta ~HS del TSC. Devuelve (height_mm, gap_mm); cada uno puede ser None.
+    El ~HS devuelve 3 paquetes STX...ETX. En el segundo paquete (valores en 1/100 pulgada, LE):
+      bytes 4-5 = largo de etiqueta, bytes 8-9 = gap.
     """
     if not hs_response or len(hs_response) < 20:
-        return None
+        return None, None
     try:
-        # Buscar paquetes delimitados por STX (0x02) / ETX (0x03)
         packets = []
         i = 0
         while i < len(hs_response):
@@ -274,15 +272,25 @@ def parse_hs_gap(hs_response):
                     continue
             i += 1
         if len(packets) >= 2:
-            pkt = packets[1]  # segundo paquete contiene dimensiones
+            pkt = packets[1]
+            height_mm = None
+            gap_mm    = None
+            if len(pkt) >= 6:
+                h = int.from_bytes(pkt[4:6], 'little') * 25.4 / 100
+                if 20.0 <= h <= 400.0:
+                    height_mm = round(h, 1)
             if len(pkt) >= 10:
-                gap_hundredths = int.from_bytes(pkt[8:10], 'little')
-                gap_mm = gap_hundredths * 25.4 / 100
-                if 1.0 <= gap_mm <= 30.0:  # rango razonable
-                    return round(gap_mm, 1)
+                g = int.from_bytes(pkt[8:10], 'little') * 25.4 / 100
+                if 1.0 <= g <= 30.0:
+                    gap_mm = round(g, 1)
+            return height_mm, gap_mm
     except Exception:
         pass
-    return None
+    return None, None
+
+def parse_hs_gap(hs_response):
+    _, gap = parse_hs_dimensions(hs_response)
+    return gap
 
 
 # ── ML Auth helpers ────────────────────────────────────────────────────────────
@@ -661,23 +669,35 @@ def autocal():
         send_to_printer(cfg['ip'], cfg['port'], '~JC')
         time.sleep(5)  # esperar que la impresora termine la calibración
 
-        # Intentar leer el gap real con ~HS
-        hs = query_printer(cfg['ip'], cfg['port'], '~HS', read_bytes=64, timeout=3)
-        gap_mm = parse_hs_gap(hs)
-        if gap_mm is None:
-            gap_mm = float(cfg.get('label_gap_mm', 10))
-            gap_source = 'config'
-        else:
-            gap_source = f'medido ({gap_mm} mm)'
-            # Guardar el gap detectado para futuros backfeeds
+        # Leer largo de etiqueta y gap desde ~HS (valores medidos por la impresora)
+        hs = query_printer(cfg['ip'], cfg['port'], '~HS', read_bytes=128, timeout=3)
+        height_mm_read, gap_mm_read = parse_hs_dimensions(hs)
+
+        if gap_mm_read is not None:
+            gap_mm     = gap_mm_read
+            gap_source = 'medido'
             cfg['label_gap_mm'] = gap_mm
-            save_config(cfg)
+        else:
+            gap_mm     = float(cfg.get('label_gap_mm', 3))
+            gap_source = 'config'
+
+        if height_mm_read is not None:
+            height_mm   = height_mm_read
+            height_dots = round(height_mm * dpi / 25.4)
+            cfg['label_height_mm'] = height_mm
+
+        save_config(cfg)
 
         gap_dots      = round(gap_mm * dpi / 25.4)
-        # ~JC avanza ~3 pitches (etiqueta + gap); retrocedemos esa misma distancia
         backfeed_dots = (height_dots + gap_dots) * 3
         send_to_printer(cfg['ip'], cfg['port'], f'BACKFEED {backfeed_dots}\r\n'.encode())
-        return jsonify({'ok': True, 'gap_mm': gap_mm, 'gap_source': gap_source, 'backfeed_dots': backfeed_dots})
+        return jsonify({
+            'ok':           True,
+            'gap_mm':       gap_mm,
+            'gap_source':   gap_source,
+            'height_mm':    height_mm if height_mm_read is not None else None,
+            'backfeed_dots': backfeed_dots,
+        })
     except socket.timeout:
         return jsonify({'ok': False, 'error': f"Timeout: no se pudo conectar a {cfg['ip']}:{cfg['port']}"}), 500
     except ConnectionRefusedError:

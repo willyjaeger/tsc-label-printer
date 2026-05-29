@@ -400,11 +400,11 @@ footer { text-align:center; font-size:.7rem; color:var(--text2); margin-top:20px
       <div class="col-body">
         <div class="cal-actions">
           <button class="btn-s btn-sm" onclick="testPrint()">Imprimir test</button>
-          <button class="btn-d btn-sm" onclick="runAutoCal(this)">Auto-calibrar (~JC) ⚠️</button>
-          <button class="btn-s btn-sm" onclick="readHsRaw(this)" title="Ver respuesta cruda ~HS de la impresora">🔍 Leer ~HS</button>
+          <button class="btn-d btn-sm" onclick="runAutoCal(this)">Calibrar etiqueta ⚠️</button>
+          <button class="btn-s btn-sm" onclick="readHsRaw(this)" title="Lee las medidas calibradas desde la impresora">Leer medidas actuales</button>
         </div>
         <div class="hint" style="margin-top:10px;padding:9px 11px;background:rgba(224,85,85,.07);border-radius:6px;border-left:2px solid rgba(224,85,85,.3)">
-          ⚠️ Auto-calibrar avanza etiquetas para detectar el gap y luego retrocede el papel automáticamente.
+          ⚠️ La calibración puede no funcionar en todas las impresoras. Para mejores resultados recomendamos usar el software oficial de la marca.
         </div>
 
         <!-- ── Medidas de etiqueta ── -->
@@ -425,29 +425,20 @@ footer { text-align:center; font-size:.7rem; color:var(--text2); margin-top:20px
               <label>Media</label>
               <select id="mediaType"><option value="gap">Gap</option><option value="mark">Mark</option><option value="continuous">Continuous</option></select>
             </div>
+          </div>
+          <div class="row" style="margin-top:8px;align-items:flex-end">
             <div class="f1">
-              <label>Backfeed (dots)</label>
-              <input type="number" id="backfeedDots" value="0" min="0">
+              <label>Corrección de posición</label>
+              <div style="display:flex;align-items:center;gap:6px">
+                <button class="btn-s btn-sm" style="padding:6px 10px;flex-shrink:0" onclick="stepLT(-1)" title="Más adentro — imagen sube en la etiqueta">▲</button>
+                <input type="number" id="backfeedDots" value="0" style="text-align:center">
+                <button class="btn-s btn-sm" style="padding:6px 10px;flex-shrink:0" onclick="stepLT(+1)" title="Más afuera — imagen baja en la etiqueta">▼</button>
+              </div>
+              <div style="font-size:.68rem;color:var(--text2);margin-top:4px">▲ adentro · ▼ afuera · 1mm por click</div>
             </div>
           </div>
         </div>
 
-        <!-- ── Retroceder papel ── -->
-        <div style="margin-top:16px;padding-top:14px;border-top:1px solid var(--border)">
-          <div style="font-size:.71rem;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--text2);margin-bottom:10px">Retroceder papel</div>
-          <div id="retractLastWrap" style="display:none;margin-bottom:10px">
-            <button id="retractLastBtn" class="btn-s btn-sm" style="width:100%;text-align:left" onclick="doRetractLast(this)">↩ …</button>
-          </div>
-          <div class="row">
-            <div class="f1">
-              <label>Cantidad de etiquetas a retroceder</label>
-              <input type="number" id="retractLabels" placeholder="ej. 2" min="1" max="20">
-            </div>
-            <div><label>&nbsp;</label>
-              <button class="btn-s btn-sm" onclick="doRetractManual(this)">↩ Retroceder</button>
-            </div>
-          </div>
-        </div>
 
         <div class="status-bar idle" id="calStatus" style="margin-top:12px">
           <div class="s-dot"></div><span id="calStatusText">—</span>
@@ -618,14 +609,12 @@ async function init() {
     document.getElementById('mlClientSecret').value  = c.ml_client_secret ?? '';
     document.getElementById('tnClientId').value      = c.tn_client_id     ?? '';
     document.getElementById('tnClientSecret').value  = c.tn_client_secret ?? '';
-    cfgDpi           = c.dpi             ?? 203;
-    cfgLabelHeightMm = c.label_height_mm ?? 150;
     document.getElementById('labelHeight').value  = c.label_height_mm ?? 150;
     document.getElementById('labelWidth').value   = c.label_width_mm  ?? 100;
     document.getElementById('labelGap').value     = c.label_gap_mm    ?? 3;
     document.getElementById('dpi').value          = c.dpi             ?? 203;
     document.getElementById('mediaType').value    = c.media_type      ?? 'gap';
-    document.getElementById('backfeedDots').value = c.backfeed_dots   ?? 0;
+    document.getElementById('backfeedDots').value = c.backfeed_dots ?? 0;
     const labelType  = c.ml_label_type   ?? 'standard';
     document.getElementById('lblTypeStandard').checked = labelType === 'standard';
     document.getElementById('lblTypeCombo').checked    = labelType === 'combo';
@@ -708,73 +697,6 @@ function flashPill(id) {
   setTimeout(() => p.classList.remove('show'), 2000);
 }
 
-// ── Retroceder papel ─────────────────────────────────
-let lastPrintLabels = 0;
-let cfgDpi         = 203;
-let cfgLabelHeightMm = 150;
-
-function calcRetractDots(nLabels) {
-  return Math.round(nLabels * cfgLabelHeightMm * cfgDpi / 25.4);
-}
-
-function offerRetract(nLabels) {
-  if (nLabels <= 0) return;
-  lastPrintLabels = nLabels;
-
-  // Botón rápido "última impresión"
-  const wrap = document.getElementById('retractLastWrap');
-  const btn  = document.getElementById('retractLastBtn');
-  btn.textContent = `↩ Retroceder última impresión (${nLabels} etiq.)`;
-  wrap.style.display = 'block';
-
-  // Sugerir en el input manual
-  document.getElementById('retractLabels').value = nLabels;
-
-  // Abrir la sección de calibración si estaba cerrada
-  const calBody = document.getElementById('calBody');
-  if (!calBody.classList.contains('open')) {
-    calBody.classList.add('open');
-    document.getElementById('calArrow').classList.add('open');
-  }
-}
-
-async function doRetractLast(btn) {
-  await sendRetract(lastPrintLabels, btn);
-}
-
-async function doRetractManual(btn) {
-  const n = parseInt(document.getElementById('retractLabels').value);
-  if (!n || n <= 0) { toast('Ingresá la cantidad de etiquetas', 'warn'); return; }
-  await sendRetract(n, btn);
-}
-
-async function sendRetract(nLabels, btn) {
-  const dots = calcRetractDots(nLabels);
-  const orig = btn.textContent;
-  btn.disabled = true;
-  btn.textContent = '⏳ Retrocediendo…';
-  setCalStatus('loading', `Retrocediendo ${nLabels} etiq. (${dots} dots)…`);
-  try {
-    const r = await fetch(API + '/retract', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({ dots }),
-    });
-    const d = await r.json();
-    if (d.ok) {
-      setCalStatus('ok', `✓ Papel retrocedido ${nLabels} etiq. (${dots} dots)`);
-      toast(`✓ Retrocedido ${nLabels} etiq.`, 'ok');
-    } else {
-      setCalStatus('err', '✗ ' + d.error);
-      toast('✗ ' + d.error, 'err');
-    }
-  } catch(e) {
-    setCalStatus('err', '✗ No se pudo conectar con la app');
-    toast('✗ No se pudo conectar con la app', 'err');
-  }
-  btn.disabled = false;
-  btn.textContent = orig;
-}
 
 // ── Drop & Print (archivo) ────────────────────────────
 const dropZone = document.getElementById('dropZone');
@@ -795,7 +717,7 @@ function handleFile(file) {
         setPrintStatus('ok', `✓ Impreso: "${file.name}" (${n} etiqueta${n !== 1 ? 's' : ''})`);
         document.getElementById('dropIcon').textContent = '✅';
         setTimeout(() => document.getElementById('dropIcon').textContent = '📄', 2500);
-        offerRetract(n);
+
       } else setPrintStatus('err', '✗ ' + d.error);
     } catch(err) { setPrintStatus('err', err.message); }
   };
@@ -824,8 +746,6 @@ async function applyCalibration(btn) {
     const r = await fetch(API + '/calibrate', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(cfg) });
     const d = await r.json();
     if (d.ok) {
-      cfgLabelHeightMm = cfg.label_height_mm;
-      cfgDpi = cfg.dpi;
       setCalStatus('ok', `✓ Guardado — ${cfg.label_height_mm}×${cfg.label_width_mm} mm · gap ${cfg.label_gap_mm} mm · ${d.dots.height} dots`);
     } else {
       setCalStatus('err', '✗ ' + d.error);
@@ -843,6 +763,25 @@ async function testPrint() {
   } catch(e) { setCalStatus('err', e.message); }
 }
 
+async function stepLT(direction) {
+  const inp = document.getElementById('backfeedDots');
+  const dpi = parseInt(document.getElementById('dpi').value) || 203;
+  const step = Math.round(dpi / 25.4);   // 1mm en dots
+  const newVal = (parseInt(inp.value) || 0) + direction * step;
+  inp.value = newVal;
+  setCalStatus('loading', `Aplicando corrección ${newVal > 0 ? '+' : ''}${newVal} dots…`);
+  try {
+    const r = await fetch(API + '/lt', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({value: newVal})
+    });
+    const d = await r.json();
+    if (d.ok) setCalStatus('ok', `✓ Corrección aplicada: ${newVal} dots (${(newVal * 25.4 / dpi).toFixed(1)} mm) — imprimí un test para verificar`);
+    else setCalStatus('err', '✗ ' + d.error);
+  } catch(e) { setCalStatus('err', '✗ ' + e.message); }
+}
+
 async function readHsRaw(btn) {
   btn.disabled = true;
   setCalStatus('loading', 'Consultando impresora…');
@@ -850,13 +789,12 @@ async function readHsRaw(btn) {
     const r = await fetch(API + '/printer/hs');
     const d = await r.json();
     if (!d.ok) { setCalStatus('err', '✗ ' + d.error); return; }
-    const msg = [
-      `QUERY SIZE → ${d.query_size ?? '(sin respuesta)'}`,
-      `~HS hex (${d.hs_len}b) → ${d.hs_hex}`,
-    ].join('\n');
-    setCalStatus('ok', `QUERY SIZE: ${d.query_size ?? 'sin resp'}`);
-    console.log(msg);
-    alert(msg);
+    const parsed = d.hs_parsed;
+    const info = parsed
+      ? `Alto: ${parsed.height_mm ?? '?'} mm · Gap: ${parsed.gap_mm ?? '?'} mm`
+      : `(no se pudo leer medidas)`;
+    setCalStatus('ok', `✓ ${info} · ${d.hs_len}b recibidos`);
+    console.log(`~HS hex (${d.hs_len}b): ${d.hs_hex}`);
   } catch(e) { setCalStatus('err', e.message); }
   btn.disabled = false;
 }
@@ -877,8 +815,9 @@ async function runAutoCal(btn) {
       const info = measured
         ? `${d.height_mm}×${d.width_mm ?? '?'} mm · gap ${d.gap_mm} mm — leídos de la impresora`
         : `gap ${d.gap_mm} mm (${d.gap_source}) · alto no leído — ingresalo manualmente`;
-      setCalStatus('ok', `✓ Calibrado — ${info} — retrocedió ${d.backfeed_dots} dots`);
+      setCalStatus('ok', `✓ Calibrado — ${info}`);
       toast(`✓ Calibrado · ${info}`, 'ok');
+      if (!measured) { console.log('autocal ~HS raw:', d.hs_hex); alert('~HS raw:\n' + d.hs_hex); }
     } else {
       setCalStatus('err', '✗ ' + d.error);
       toast('✗ ' + d.error, 'err');
@@ -1107,7 +1046,7 @@ async function printOrder(shipmentId, cardEl, reprint) {
         btn.textContent = '↺ Reimprimir';
         btn.onclick = () => printOrder(shipmentId, cardEl, true);
       }
-      offerRetract(d.labels || 2);
+
     } else {
       cardEl.classList.add('error');
       alert('Error al imprimir:\n\n' + d.error);
@@ -1144,7 +1083,7 @@ async function printAll() {
       renderOrdersArea();
       const warn = d.failed?.length ? `\nFallaron: ${d.failed.join(', ')}` : '';
       toast(`✓ ${d.printed} pedido(s) impresos${warn}`, 'ok');
-      offerRetract(d.labels || d.printed * 2);
+
     } else {
       alert('Error: ' + d.error);
     }
@@ -1202,7 +1141,7 @@ async function printSelected() {
       renderOrdersArea();
       const warn = d.failed?.length ? `\nFallaron: ${d.failed.join(', ')}` : '';
       toast(`✓ ${d.printed} pedido(s) impresos${warn}`, 'ok');
-      offerRetract(d.labels || d.printed * 2);
+
     } else {
       alert('Error: ' + d.error);
     }
@@ -1733,7 +1672,7 @@ async function printTNOrder(orderId, cardEl, reprint) {
         btn.textContent = '↺ Reimprimir';
         btn.onclick = () => printTNOrder(orderId, cardEl, true);
       }
-      offerRetract(d.labels || 1);
+
       toast('✓ Etiqueta Andreani impresa', 'ok');
     } else {
       cardEl.classList.add('error');
@@ -1762,7 +1701,7 @@ async function printAllTNOrders() {
       renderTNArea();
       const warn = d.failed?.length ? ` · Fallaron: ${d.failed.join(', ')}` : '';
       toast(`✓ ${d.printed} etiqueta(s) impresas${warn}`, 'ok');
-      offerRetract(d.labels || d.printed);
+
     } else {
       alert('Error: ' + d.error);
     }

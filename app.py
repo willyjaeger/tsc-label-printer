@@ -646,6 +646,21 @@ def print_label():
 
 # ── Calibración ────────────────────────────────────────────────────────────────
 
+@app.route('/lt', methods=['POST'])
+def set_lt():
+    """Aplica ^LT (corrección de posición) en tiempo real y guarda en config."""
+    cfg  = load_config()
+    body = request.get_json(silent=True) or {}
+    value = int(body.get('value', 0))
+    cfg['backfeed_dots'] = value
+    save_config(cfg)
+    try:
+        send_to_printer(cfg['ip'], cfg['port'], f'^XA^LT{value}^XZ')
+        return jsonify({'ok': True, 'value': value})
+    except Exception as e:
+        return jsonify({'ok': False, 'error': str(e)}), 500
+
+
 @app.route('/calibrate', methods=['POST'])
 def calibrate():
     cfg = load_config()
@@ -705,22 +720,20 @@ def _query_size(ip, port):
 
 @app.route('/printer/hs')
 def printer_hs():
-    """Diagnóstico: muestra respuesta cruda de QUERY SIZE y ~HS."""
+    """Diagnóstico: muestra respuesta cruda de ~HS."""
     try:
         cfg = load_config()
         ip, port = cfg.get('ip', ''), int(cfg.get('port', 9100))
-
-        qs_raw = query_printer(ip, port, 'QUERY SIZE\r\n', read_bytes=128, timeout=3)
-        hs_raw = query_printer(ip, port, '~HS', read_bytes=256, timeout=3)
-
+        hs_raw = query_printer(ip, port, '~HS', read_bytes=512, timeout=4)
+        dpi = int(cfg.get('dpi', 203))
+        height_mm, gap_mm = parse_hs_dimensions(hs_raw, dpi=dpi)
         def hex_dump(b):
             return ' '.join(f'{x:02x}' for x in b) if b else '(sin respuesta)'
-
         return jsonify({
-            'ok': True,
-            'query_size': qs_raw.decode('ascii', errors='replace').strip() if qs_raw else None,
-            'hs_hex': hex_dump(hs_raw),
-            'hs_len': len(hs_raw) if hs_raw else 0,
+            'ok':        True,
+            'hs_hex':    hex_dump(hs_raw),
+            'hs_len':    len(hs_raw) if hs_raw else 0,
+            'hs_parsed': {'height_mm': height_mm, 'gap_mm': gap_mm} if (height_mm or gap_mm) else None,
         })
     except Exception as e:
         return jsonify({'ok': False, 'error': str(e)})
@@ -735,10 +748,18 @@ def autocal():
         height_dots = round(height_mm * dpi / 25.4)
 
         send_to_printer(cfg['ip'], cfg['port'], '~JC')
-        time.sleep(5)  # esperar que la impresora termine la calibración
 
-        # Leer dimensiones reales desde ~HS post-calibración
-        hs = query_printer(cfg['ip'], cfg['port'], '~HS', read_bytes=256, timeout=3)
+        # Esperar calibración: reintenta cada 2s hasta que ~HS devuelva datos válidos (máx 20s)
+        hs = None
+        for attempt in range(10):
+            time.sleep(2)
+            hs = query_printer(cfg['ip'], cfg['port'], '~HS', read_bytes=512, timeout=4)
+            if hs:
+                h, g = parse_hs_dimensions(hs, dpi=dpi)
+                if h is not None or g is not None:
+                    break  # tenemos datos válidos
+
+        hs_hex = ' '.join(f'{b:02x}' for b in hs) if hs else '(sin respuesta)'
         height_mm_read, gap_mm_read = parse_hs_dimensions(hs, dpi=dpi)
         width_mm_read = None   # ~HS no reporta ancho
 
@@ -760,16 +781,13 @@ def autocal():
 
         save_config(cfg)
 
-        gap_dots      = round(gap_mm * dpi / 25.4)
-        backfeed_dots = (height_dots + gap_dots) * 3
-        send_to_printer(cfg['ip'], cfg['port'], f'BACKFEED {backfeed_dots}\r\n'.encode())
         return jsonify({
-            'ok':            True,
-            'gap_mm':        gap_mm,
-            'gap_source':    gap_source,
-            'height_mm':     height_mm_read,
-            'width_mm':      width_mm_read,
-            'backfeed_dots': backfeed_dots,
+            'ok':         True,
+            'gap_mm':     gap_mm,
+            'gap_source': gap_source,
+            'height_mm':  height_mm_read,
+            'width_mm':   width_mm_read,
+            'hs_hex':     hs_hex,
         })
     except socket.timeout:
         return jsonify({'ok': False, 'error': f"Timeout: no se pudo conectar a {cfg['ip']}:{cfg['port']}"}), 500
@@ -1229,56 +1247,69 @@ def _build_combo_zpl(order_data, ml_zpl_bytes, cfg):
     die_dots    = round(die_cut_mm * dpm)
     total_dots  = round((ship_h_mm + die_cut_mm) * dpm)
 
-    correlative = order_data.get('correlative')
-    items       = order_data.get('items', [])
+    items = order_data.get('items', [])
     m = 20
-    y = 10
+    y = 20
     detail = []
 
-    # Correlativo compacto en el troquel
-    if correlative is not None:
-        detail.append(f'^FO{m},{y}^A0N,46,24^FD#{correlative:03d}^FS')
-        y += 54
+    fld_w = w - m * 2
 
     # Items dentro del troquel
-    fh, fw   = 22, 10
+    fh, fw   = 30, 20
     line_h   = fh + 5
-    fld_w    = w - m * 2
-    cpl      = max(10, fld_w // fw)
+    bullet_s = 9
+    indent   = bullet_s + 10
+    t_fw     = fw
+    cpl      = max(6, (fld_w - indent - fw - 8) // t_fw)
     for item in items:
         if y > die_dots - line_h - 8:
-            detail.append(f'^FO{m},{y}^ADN,18,8^FD...^FS')
+            detail.append(f'^FO{m},{y}^A0N,22,14^FD...^FS')
             break
         qty   = item.get('qty', 1)
         title = _ascii_zpl(str(item.get('title', '')))
-        label = f'x{qty} {title}'
-        nl    = max(1, min(3, (len(label) + cpl - 1) // cpl))
-        detail.append(f'^FO{m},{y}^ADN,{fh},{fw}^FB{fld_w},{nl},4,L,0^FD{label}^FS')
-        y += nl * line_h + 4
 
-    # Línea separadora en el troquel
-    detail.append(f'^FO0,{die_dots - 3}^GB{w},3,3^FS')
+        # Líneas disponibles antes de salir del troquel
+        available = max(1, (die_dots - y - 12) // line_h)
+
+        # Viñeta cuadrada centrada verticalmente
+        by = y + (fh - bullet_s) // 2
+        detail.append(f'^FO{m},{by}^GB{bullet_s},{bullet_s},{bullet_s}^FS')
+
+        # Cantidad en negrita simulada
+        qx = m + indent
+        detail.append(f'^FO{qx},{y}^A0N,{fh},{fw}^FD{qty}^FS')
+        detail.append(f'^FO{qx + 1},{y}^A0N,{fh},{fw}^FD{qty}^FS')
+
+        # Título con wrapping, nunca sale del troquel
+        tx  = qx + fw + 8
+        t_w = fld_w - (tx - m)
+        nl  = max(1, min(available, min(4, (len(title) + cpl - 1) // cpl)))
+        detail.append(f'^FO{tx},{y}^A0N,{fh},{t_fw}^FB{t_w},{nl},4,L,0^FD{title}^FS')
+        y += nl * line_h + 4
 
     # ── Procesar ZPL de ML ───────────────────────────────────────────────────
     ml_str = ml_zpl_bytes.decode('latin-1', errors='replace')
 
-    # Extraer solo el cuerpo (entre ^XA y ^XZ del primer bloque)
     body_match = re.search(r'\^XA(.*?)\^XZ', ml_str, re.DOTALL | re.IGNORECASE)
     ml_body = body_match.group(1) if body_match else ml_str
 
-    # Eliminar directivas de tamaño — las reemplazamos con las nuestras
     ml_body = re.sub(r'\^PW\d+', '', ml_body, flags=re.IGNORECASE)
     ml_body = re.sub(r'\^LL\d+', '', ml_body, flags=re.IGNORECASE)
     ml_body = re.sub(r'\^LT-?\d+', '', ml_body, flags=re.IGNORECASE)
     ml_body = re.sub(r'\^MN[A-Z]', '', ml_body, flags=re.IGNORECASE)
 
-    # Desplazar todos los ^FO y-coords hacia abajo por die_dots
+    # ML empieza: die_cut + 18mm (10mm previos + 8mm solicitados)
+    ml_offset = die_dots + round(18 * dpm)
     def shift_fo(m_):
-        return f'^FO{m_.group(1)},{int(m_.group(2)) + die_dots}'
+        return f'^FO{m_.group(1)},{int(m_.group(2)) + ml_offset}'
     ml_body = re.sub(r'\^FO(\d+),(\d+)', shift_fo, ml_body, flags=re.IGNORECASE)
 
+    # Separador justo encima del label de envío (5 dots antes)
+    detail.append(f'^FO0,{ml_offset - 5}^GB{w},3,3^FS')
+
     # ── Ensamblar ZPL único ──────────────────────────────────────────────────
-    parts = ['^XA', f'^PW{w}', f'^LL{total_dots}', '^LT0']
+    # total_dots += 8mm para compensar el offset extra y no cortar el pie del label ML
+    parts = ['^XA', f'^PW{w}', f'^LL{total_dots + round(8 * dpm)}', '^LT0']
     parts.extend(detail)
     parts.append(ml_body.strip())
     parts.append('^XZ')
@@ -1399,6 +1430,60 @@ def ml_zpl_preview(shipment_id):
         return str(e), 500
 
 
+@app.route('/ml/combo-debug/<int:shipment_id>')
+def ml_combo_debug(shipment_id):
+    """Devuelve el ZPL combo sin imprimir + datos de order_data para diagnóstico."""
+    token = get_valid_token()
+    if not token:
+        return jsonify({'ok': False, 'need_login': True}), 401
+    try:
+        cfg = load_config()
+        r = http.get(
+            f'{ML_API}/shipment_labels',
+            params={'shipment_ids': shipment_id, 'response_type': 'zpl2'},
+            headers={'Authorization': f'Bearer {token}'}, timeout=20,
+        )
+        zpl, err = _extract_zpl(r.content, r.status_code, r.text, r.headers.get('content-type', ''))
+        if err:
+            return jsonify({'ok': False, 'error': f'ML {r.status_code}: {r.text[:300]}'}), 502
+
+        order_data = {'order_id': '0', 'shipment_id': str(shipment_id),
+                      'buyer': 'TEST', 'items': [], 'correlative': 1}
+        # Intentar obtener datos reales del pedido desde la API
+        try:
+            ro = http.get(f'{ML_API}/orders/search?tags=with_shipments&shipping_id={shipment_id}',
+                          headers={'Authorization': f'Bearer {token}'}, timeout=10)
+            orders = ro.json().get('results', [])
+            if orders:
+                o = orders[0]
+                order_data['order_id'] = str(o.get('id', ''))
+                order_data['buyer'] = o.get('buyer', {}).get('nickname', '')
+                order_data['items'] = [
+                    {'qty': i.get('quantity', 1), 'title': i.get('item', {}).get('title', '')}
+                    for i in o.get('order_items', [])
+                ]
+        except Exception:
+            pass
+        # Fallback: buscar en orders.json (pedidos ya impresos no tienen order_items en la API)
+        if not order_data['items']:
+            saved = next((o for o in load_orders() if str(o.get('shipment_id')) == str(shipment_id)), None)
+            if saved and saved.get('items'):
+                order_data['order_id'] = str(saved.get('id', order_data['order_id']))
+                order_data['buyer']    = saved.get('buyer', order_data['buyer'])
+                order_data['items']    = saved['items']
+
+        combo_zpl = _build_combo_zpl(order_data, zpl, cfg).decode('latin-1', errors='replace')
+        return jsonify({
+            'ok': True,
+            'items_count': len(order_data['items']),
+            'items': order_data['items'],
+            'zpl_len': len(combo_zpl),
+            'zpl_preview': combo_zpl[:500],
+        })
+    except Exception as e:
+        return jsonify({'ok': False, 'error': str(e)}), 500
+
+
 @app.route('/ml/print/<int:shipment_id>', methods=['POST'])
 def ml_print(shipment_id):
     token = get_valid_token()
@@ -1417,6 +1502,14 @@ def ml_print(shipment_id):
         zpl, err = _extract_zpl(r.content, r.status_code, r.text, r.headers.get('content-type', ''))
         if err:
             return jsonify({'ok': False, 'error': err}), 502
+
+        # Si no vienen items desde el frontend (reimpresión), buscar en orders.json
+        if not order_data.get('items'):
+            saved = next((o for o in load_orders() if str(o.get('shipment_id')) == str(shipment_id)), None)
+            if saved and saved.get('items'):
+                order_data.setdefault('order_id', saved.get('id', ''))
+                order_data.setdefault('buyer',    saved.get('buyer', ''))
+                order_data['items'] = saved['items']
 
         if order_data.get('items'):
             corr = next_correlative()
@@ -1732,26 +1825,6 @@ def tn_print_all():
         return jsonify({'ok': False, 'error': str(e)}), 500
 
 
-# ── Retroceder papel ──────────────────────────────────────────────────────────
-
-@app.route('/retract', methods=['POST'])
-def retract():
-    """Envía comando TSPL REVERSE {dots} para retroceder el papel."""
-    cfg  = load_config()
-    body = request.get_json(silent=True) or {}
-    dots = int(body.get('dots', 0))
-    if dots <= 0:
-        return jsonify({'ok': False, 'error': 'dots debe ser > 0'}), 400
-    try:
-        # TSPL: BACKFEED n retrocede n dots (comando nativo TSC)
-        send_to_printer(cfg['ip'], cfg['port'], f'BACKFEED {dots}\r\n'.encode())
-        return jsonify({'ok': True, 'dots': dots})
-    except socket.timeout:
-        return jsonify({'ok': False, 'error': f"Timeout: {cfg['ip']}:{cfg['port']}"}), 500
-    except ConnectionRefusedError:
-        return jsonify({'ok': False, 'error': 'Conexión rechazada'}), 500
-    except Exception as e:
-        return jsonify({'ok': False, 'error': str(e)}), 500
 
 
 # ── SSE stream ────────────────────────────────────────────────────────────────
@@ -1916,7 +1989,33 @@ def _run_tray():
     _tray_icon.run()
 
 
+def _kill_existing_on_port(port=5050):
+    """Mata cualquier proceso que ya esté escuchando en el puerto (Windows)."""
+    import subprocess
+    try:
+        result = subprocess.run(
+            ['netstat', '-ano'],
+            capture_output=True, text=True, timeout=5
+        )
+        own_pid = str(os.getpid())
+        killed = []
+        for line in result.stdout.splitlines():
+            if f':{port} ' in line and 'LISTEN' in line:
+                parts = line.split()
+                pid = parts[-1] if parts else ''
+                if pid and pid != own_pid and pid != '0':
+                    subprocess.run(['taskkill', '/F', '/PID', pid],
+                                   capture_output=True, timeout=5)
+                    killed.append(pid)
+        if killed:
+            print(f"  Instancia(s) anterior(es) terminada(s): PID {', '.join(killed)}")
+            time.sleep(0.8)
+    except Exception:
+        pass
+
+
 def start():
+    _kill_existing_on_port(5050)
     threading.Thread(target=run_flask, daemon=True).start()
     threading.Thread(target=_poll_worker, daemon=True).start()
     time.sleep(1.2)

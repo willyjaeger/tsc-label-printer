@@ -430,9 +430,15 @@ footer { text-align:center; font-size:.7rem; color:var(--text2); margin-top:20px
             <div class="f1">
               <label>Corrección de posición</label>
               <div style="display:flex;align-items:center;gap:6px">
-                <button class="btn-s btn-sm" style="padding:6px 10px;flex-shrink:0" onclick="stepLT(-1)" title="Más adentro — imagen sube en la etiqueta">▲</button>
-                <input type="number" id="backfeedDots" value="0" style="text-align:center">
-                <button class="btn-s btn-sm" style="padding:6px 10px;flex-shrink:0" onclick="stepLT(+1)" title="Más afuera — imagen baja en la etiqueta">▼</button>
+                <button class="btn-s btn-sm" style="padding:6px 10px;flex-shrink:0;user-select:none"
+                  title="Más adentro — imagen sube en la etiqueta"
+                  onmousedown="ltHoldStart(-1)" onmouseup="ltHoldStop()" onmouseleave="ltHoldStop()"
+                  ontouchstart="ltHoldStart(-1);event.preventDefault()" ontouchend="ltHoldStop()">▲</button>
+                <input type="number" id="backfeedDots" value="0" style="text-align:center" onchange="ltApply()">
+                <button class="btn-s btn-sm" style="padding:6px 10px;flex-shrink:0;user-select:none"
+                  title="Más afuera — imagen baja en la etiqueta"
+                  onmousedown="ltHoldStart(+1)" onmouseup="ltHoldStop()" onmouseleave="ltHoldStop()"
+                  ontouchstart="ltHoldStart(+1);event.preventDefault()" ontouchend="ltHoldStop()">▼</button>
               </div>
               <div style="font-size:.68rem;color:var(--text2);margin-top:4px">▲ adentro · ▼ afuera · 1mm por click</div>
             </div>
@@ -763,23 +769,49 @@ async function testPrint() {
   } catch(e) { setCalStatus('err', e.message); }
 }
 
-async function stepLT(direction) {
+// ── Corrección de posición (^LT) ─────────────────────
+let _ltHoldTimer = null;
+let _ltDebounce  = null;
+
+function _ltStep(direction) {
+  const inp  = document.getElementById('backfeedDots');
+  const dpi  = parseInt(document.getElementById('dpi').value) || 203;
+  const step = Math.round(dpi / 25.4);
+  const val  = (parseInt(inp.value) || 0) + direction * step;
+  inp.value  = val;
+  const mm   = (val * 25.4 / dpi).toFixed(1);
+  setCalStatus('ok', `${val > 0 ? '+' : ''}${val} dots (${mm} mm)`);
+  // Debounce: envía al printer solo 300ms después del último cambio
+  clearTimeout(_ltDebounce);
+  _ltDebounce = setTimeout(() => ltApply(), 300);
+}
+
+function ltHoldStart(direction) {
+  _ltStep(direction);                        // respuesta inmediata al primer click
+  _ltHoldTimer = setTimeout(() => {
+    _ltHoldTimer = setInterval(() => _ltStep(direction), 150);
+  }, 450);                                   // hold delay antes de repetir
+}
+
+function ltHoldStop() {
+  clearTimeout(_ltHoldTimer);
+  clearInterval(_ltHoldTimer);
+  _ltHoldTimer = null;
+}
+
+function ltApply() {
+  clearTimeout(_ltDebounce);
+  _ltDebounce = null;
   const inp = document.getElementById('backfeedDots');
+  const val = parseInt(inp.value) || 0;
   const dpi = parseInt(document.getElementById('dpi').value) || 203;
-  const step = Math.round(dpi / 25.4);   // 1mm en dots
-  const newVal = (parseInt(inp.value) || 0) + direction * step;
-  inp.value = newVal;
-  setCalStatus('loading', `Aplicando corrección ${newVal > 0 ? '+' : ''}${newVal} dots…`);
-  try {
-    const r = await fetch(API + '/lt', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({value: newVal})
-    });
-    const d = await r.json();
-    if (d.ok) setCalStatus('ok', `✓ Corrección aplicada: ${newVal} dots (${(newVal * 25.4 / dpi).toFixed(1)} mm) — imprimí un test para verificar`);
-    else setCalStatus('err', '✗ ' + d.error);
-  } catch(e) { setCalStatus('err', '✗ ' + e.message); }
+  fetch(API + '/lt', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({value: val}),
+  }).then(r => r.json()).then(d => {
+    if (!d.ok) setCalStatus('err', '✗ ' + d.error);
+  }).catch(() => setCalStatus('err', '✗ Sin conexión con la app'));
 }
 
 async function readHsRaw(btn) {
@@ -1026,6 +1058,10 @@ async function printOrder(shipmentId, cardEl, reprint) {
     logistic_type: order._shipment?.logistic_type || '',
     items:        (order.order_items || []).map(i => ({ qty: i.quantity, title: i.item?.title || '' })),
   } : {};
+  console.log(`[printOrder ${shipmentId}] order found:`, !!order,
+    '| order_items:', order?.order_items?.length ?? 'N/A',
+    '| items to send:', detail.items?.length ?? 0,
+    detail.items?.slice(0, 2));
 
   try {
     const r = await fetch(`${API}/ml/print/${shipmentId}`, {
@@ -1034,6 +1070,7 @@ async function printOrder(shipmentId, cardEl, reprint) {
       body: JSON.stringify(detail),
     });
     const d = await r.json();
+    console.log(`[printOrder ${shipmentId}] response:`, d);
     cardEl.classList.remove('printing');
     if (d.ok) {
       markPrinted(shipmentId);

@@ -1122,8 +1122,9 @@ def pdf_to_zpl(pdf_bytes: bytes, width_mm: float = 100.0,
 
 
 def _ascii_zpl(text):
-    table = str.maketrans('áéíóúÁÉÍÓÚñÑüÜ', 'aeiouAEIOUnNuU')
-    return text.translate(table)
+    # Preserva acentos latinos (á é í ó ú ñ ü etc.) — están en latin-1.
+    # Solo reemplaza caracteres fuera de latin-1 (emoji, chino, etc.) con '?'.
+    return str(text).encode('latin-1', errors='replace').decode('latin-1')
 
 
 def next_correlative():
@@ -1220,7 +1221,7 @@ def _build_detail_zpl(order_data, cfg):
         first = False
         qty   = item.get('qty', 1)
         title = _ascii_zpl(str(item.get('title', '')))
-        label = f'x{qty}  {title}'
+        label = f'{qty}  {title}'
         nlines = max(1, min(6, (len(label) + cpl - 1) // cpl))
         lines.append(f'^FO{m},{y + 8}^GB14,14,14^FS')
         lines.append(f'^FO{m + 22},{y}^ADN,{font_h},{font_w}^FB{fld_w},{nlines},6,L,0^FD{label}^FS')
@@ -1233,85 +1234,75 @@ def _build_detail_zpl(order_data, cfg):
 def _build_combo_zpl(order_data, ml_zpl_bytes, cfg):
     """
     Etiqueta combo 100×190 mm con troquel:
-      - Top die_cut_mm: correlativo + items (sin barcode ni datos extra)
-      - Bottom label_height_mm: ZPL de ML desplazado die_cut_dots hacia abajo
-    Todo en un único ^XA...^XZ → una sola etiqueta física.
+      Layout físico: troquel ARRIBA (sale primero), envío ABAJO.
+      - y=0..die_dots        : items del pedido (troquel, 40 mm)
+      - y=die_dots..total    : ZPL de ML (sección envío, 150 mm)
     """
     import re
 
-    dpi         = int(cfg.get('dpi', 203))
-    dpm         = dpi / 25.4
-    w           = round(float(cfg.get('label_width_mm',  100)) * dpm)
-    ship_h_mm   = float(cfg.get('label_height_mm', 150))
-    die_cut_mm  = float(cfg.get('ml_die_cut_mm', 40))
-    die_dots    = round(die_cut_mm * dpm)
-    total_dots  = round((ship_h_mm + die_cut_mm) * dpm)
+    dpi        = int(cfg.get('dpi', 203))
+    dpm        = dpi / 25.4
+    w          = round(float(cfg.get('label_width_mm', 100)) * dpm)
+    total_mm   = float(cfg.get('label_height_mm', 190))
+    die_cut_mm = float(cfg.get('ml_die_cut_mm', 40))
+    ship_h_mm  = total_mm - die_cut_mm
+    die_dots   = round(die_cut_mm * dpm)
+    total_dots = round(total_mm * dpm)
 
-    items = order_data.get('items', [])
-    m = 20
-    y = 20
+    # ── Items en el troquel (parte superior) ─────────────────────────────────
+    items  = order_data.get('items', [])
+    margin = 20
+    y      = 20
     detail = []
 
-    fld_w = w - m * 2
+    # Misma fuente y enfoque que _build_detail_zpl (100×150): ^ADN,30,13 + ^FB
+    font_h  = 30
+    font_w  = 13
+    line_h  = font_h + 8
+    fld_w   = w - margin - 22 - margin   # igual que detail
+    cpl     = max(10, fld_w // font_w)
 
-    # Items dentro del troquel
-    fh, fw   = 30, 20
-    line_h   = fh + 5
-    bullet_s = 9
-    indent   = bullet_s + 10
-    t_fw     = fw
-    cpl      = max(6, (fld_w - indent - fw - 8) // t_fw)
     for item in items:
         if y > die_dots - line_h - 8:
-            detail.append(f'^FO{m},{y}^A0N,22,14^FD...^FS')
+            detail.append(f'^FO{margin},{y}^ADN,22,10^FD...^FS')
             break
         qty   = item.get('qty', 1)
         title = _ascii_zpl(str(item.get('title', '')))
+        label = f'{qty}  {title}'
+        nl    = max(1, min(4, (len(label) + cpl - 1) // cpl))
+        nl    = min(nl, max(1, (die_dots - y - 12) // line_h))
+        detail.append(f'^FO{margin},{y + 6}^GB14,14,14^FS')
+        detail.append(f'^FO{margin + 22},{y}^ADN,{font_h},{font_w}^FB{fld_w},{nl},6,L,0^FD{label}^FS')
+        y += nl * line_h + 6
 
-        # Líneas disponibles antes de salir del troquel
-        available = max(1, (die_dots - y - 12) // line_h)
-
-        # Viñeta cuadrada centrada verticalmente
-        by = y + (fh - bullet_s) // 2
-        detail.append(f'^FO{m},{by}^GB{bullet_s},{bullet_s},{bullet_s}^FS')
-
-        # Cantidad en negrita simulada
-        qx = m + indent
-        detail.append(f'^FO{qx},{y}^A0N,{fh},{fw}^FD{qty}^FS')
-        detail.append(f'^FO{qx + 1},{y}^A0N,{fh},{fw}^FD{qty}^FS')
-
-        # Título con wrapping, nunca sale del troquel
-        tx  = qx + fw + 8
-        t_w = fld_w - (tx - m)
-        nl  = max(1, min(available, min(4, (len(title) + cpl - 1) // cpl)))
-        detail.append(f'^FO{tx},{y}^A0N,{fh},{t_fw}^FB{t_w},{nl},4,L,0^FD{title}^FS')
-        y += nl * line_h + 4
-
-    # ── Procesar ZPL de ML ───────────────────────────────────────────────────
-    ml_str = ml_zpl_bytes.decode('latin-1', errors='replace')
-
+    # ── Procesar ZPL de ML → sección inferior (envío) ───────────────────────
+    ml_str     = ml_zpl_bytes.decode('latin-1', errors='replace')
     body_match = re.search(r'\^XA(.*?)\^XZ', ml_str, re.DOTALL | re.IGNORECASE)
-    ml_body = body_match.group(1) if body_match else ml_str
+    ml_body    = body_match.group(1) if body_match else ml_str
 
-    ml_body = re.sub(r'\^PW\d+', '', ml_body, flags=re.IGNORECASE)
-    ml_body = re.sub(r'\^LL\d+', '', ml_body, flags=re.IGNORECASE)
-    ml_body = re.sub(r'\^LT-?\d+', '', ml_body, flags=re.IGNORECASE)
-    ml_body = re.sub(r'\^MN[A-Z]', '', ml_body, flags=re.IGNORECASE)
+    for pat in (r'\^PW\d+', r'\^LL\d+', r'\^LT-?\d+', r'\^MN[A-Z]', r'\^LH\d+,\d+'):
+        ml_body = re.sub(pat, '', ml_body, flags=re.IGNORECASE)
+    # NO stripear ^CI del body de ML — el ML usa UTF-8 (^CI28) para sus textos (ej. "Envío Flex")
 
-    # ML empieza: die_cut + 18mm (10mm previos + 8mm solicitados)
-    ml_offset = die_dots + round(18 * dpm)
+    # Eliminar margen superior interno del ZPL de ML y arrancar justo debajo del separador
+    ml_y_vals    = [int(m.group(1)) for m in re.finditer(r'\^FO\d+,(\d+)', ml_body)]
+    ml_top_strip = min(ml_y_vals) if ml_y_vals else 0
+    ml_offset    = die_dots + round(5 * dpm)   # 5mm de gap entre troquel y envío
+
     def shift_fo(m_):
-        return f'^FO{m_.group(1)},{int(m_.group(2)) + ml_offset}'
+        y_new = int(m_.group(2)) - ml_top_strip + ml_offset
+        return f'^FO{m_.group(1)},{max(0, y_new)}'
     ml_body = re.sub(r'\^FO(\d+),(\d+)', shift_fo, ml_body, flags=re.IGNORECASE)
 
-    # Separador justo encima del label de envío (5 dots antes)
-    detail.append(f'^FO0,{ml_offset - 5}^GB{w},3,3^FS')
+    # Separador horizontal entre troquel y envío
+    sep_y = ml_offset - 5
 
-    # ── Ensamblar ZPL único ──────────────────────────────────────────────────
-    # total_dots += 8mm para compensar el offset extra y no cortar el pie del label ML
-    parts = ['^XA', f'^PW{w}', f'^LL{total_dots + round(8 * dpm)}', '^LT0']
-    parts.extend(detail)
-    parts.append(ml_body.strip())
+    # ── Ensamblar ────────────────────────────────────────────────────────────
+    lt    = round(8 * dpm)
+    parts = ['^XA', f'^PW{w}', f'^LL{total_dots}', f'^LT{lt}', '^CI27']
+    parts.extend(detail)                          # troquel: latin-1 (^CI27 activo)
+    parts.append(f'^FO0,{sep_y}^GB{w},3,3^FS')   # separador
+    parts.append(ml_body.strip())                 # envío después
     parts.append('^XZ')
 
     return ('\r\n'.join(parts) + '\r\n').encode('latin-1', errors='replace')
@@ -1506,10 +1497,40 @@ def ml_print(shipment_id):
         # Si no vienen items desde el frontend (reimpresión), buscar en orders.json
         if not order_data.get('items'):
             saved = next((o for o in load_orders() if str(o.get('shipment_id')) == str(shipment_id)), None)
-            if saved and saved.get('items'):
+            if saved:
                 order_data.setdefault('order_id', saved.get('id', ''))
                 order_data.setdefault('buyer',    saved.get('buyer', ''))
-                order_data['items'] = saved['items']
+                if saved.get('items'):
+                    order_data['items'] = saved['items']
+
+        # Último recurso: consultar la API de ML directamente para obtener los items
+        if not order_data.get('items'):
+            try:
+                order_id_for_api = order_data.get('order_id') or ''
+                # Intentar buscar por shipping_id
+                ro = http.get(f'{ML_API}/orders/search',
+                              params={'tags': 'with_shipments', 'shipping_id': shipment_id},
+                              headers={'Authorization': f'Bearer {token}'}, timeout=10)
+                ml_orders = ro.json().get('results', [])
+                if ml_orders:
+                    o = ml_orders[0]
+                    items_from_api = [
+                        {'qty': i.get('quantity', 1), 'title': i.get('item', {}).get('title', '')}
+                        for i in o.get('order_items', [])
+                    ]
+                    if items_from_api:
+                        order_data['items']    = items_from_api
+                        order_data['order_id'] = str(o.get('id', order_id_for_api))
+                        order_data['buyer']    = (o.get('buyer') or {}).get('nickname', order_data.get('buyer', ''))
+                        # Actualizar orders.json con los items encontrados
+                        orders = load_orders()
+                        for saved_o in orders:
+                            if str(saved_o.get('shipment_id')) == str(shipment_id):
+                                saved_o['items'] = items_from_api
+                                break
+                        save_orders(orders)
+            except Exception:
+                pass
 
         if order_data.get('items'):
             corr = next_correlative()
@@ -1521,7 +1542,8 @@ def ml_print(shipment_id):
             n_labels = count_labels(payload)
         send_to_printer(cfg['ip'], cfg['port'], payload)
         _save_printed_order(order_data)
-        return jsonify({'ok': True, 'labels': n_labels})
+        return jsonify({'ok': True, 'labels': n_labels,
+                        'items_used': len(order_data.get('items', []))})
     except socket.timeout:
         return jsonify({'ok': False, 'error': f"Timeout de impresora: {cfg['ip']}:{cfg['port']}"}), 500
     except Exception as e:

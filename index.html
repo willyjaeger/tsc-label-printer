@@ -1752,7 +1752,7 @@ function renderTNArea(loading = false, errorMsg = null) {
   if (!tnUser) {
     area.innerHTML = `
       <div class="card ml-login-card">
-        <div class="ml-logo"><svg width="56" height="56" viewBox="0 0 56 56" style="border-radius:14px;display:block"><rect width="56" height="56" rx="14" fill="#FFE600"/><text x="28" y="40" font-family="Arial Black,Arial,sans-serif" font-size="26" font-weight="900" text-anchor="middle" fill="#1A3661">ML</text></svg></div>
+        <div class="ml-logo"><svg width="56" height="56" viewBox="0 0 56 56" style="border-radius:14px;display:block"><rect width="56" height="56" rx="14" fill="#00C1A2"/><text x="28" y="40" font-family="Arial Black,Arial,sans-serif" font-size="22" font-weight="900" text-anchor="middle" fill="#fff">TN</text></svg></div>
         <div class="ml-login-title">Conectar con TiendaNube</div>
         <div class="ml-login-sub">
           Ingresá con tu cuenta vendedor para ver los pedidos<br>
@@ -1813,10 +1813,10 @@ function renderTNArea(loading = false, errorMsg = null) {
     const printed  = tnIsPrinted(order.id);
     const btnClass = printed ? 'btn-p' : 'btn-ok';
     const btnLabel = printed ? '↺ Reimprimir' : '🖨️ Imprimir';
-    const buyer    = order.buyer?.name || order.buyer?.email || '—';
+    const buyer    = order.contact_name || order.contact_email || '—';
     const items    = order.products || [];
     const addr     = order.shipping_address;
-    const addrStr  = addr ? [addr.address, addr.city, addr.province].filter(Boolean).join(', ') : '';
+    const addrStr  = addr ? [addr.address, addr.number, addr.city, addr.province].filter(Boolean).join(', ') : '';
     const dateStr  = order.created_at ? timeAgo(order.created_at) : '';
     const cardCls  = ['order-card', 'tn-type', printed ? 'printed' : ''].filter(Boolean).join(' ');
 

@@ -1161,7 +1161,7 @@ def pdf_to_zpl(pdf_bytes: bytes, width_mm: float = 100.0,
             bitmap = bytes(bmp)
 
     hex_data = bitmap.hex().upper()
-    return (f'^XA\r\n^FO0,0\r\n'
+    return (f'^XA\r\n^PW{target_w}\r\n^LL{target_h}\r\n^FO0,0\r\n'
             f'^GFA,{total_bytes},{total_bytes},{bytes_per_row},{hex_data}\r\n'
             f'^XZ\r\n').encode('ascii')
 
@@ -1824,10 +1824,11 @@ def tn_print(order_id):
         pdf_bytes = _tn_get_label_pdf(fo['id'], cfg)
 
         # 3. Convertir PDF → ZPL
+        # Andreani labels are always 100×150mm regardless of ML combo config
         zpl = pdf_to_zpl(
             pdf_bytes,
-            width_mm=float(cfg.get('label_width_mm', 100)),
-            height_mm=float(cfg.get('label_height_mm', 150)),
+            width_mm=100.0,
+            height_mm=150.0,
             dpi=int(cfg.get('dpi', 203)),
         )
 
@@ -1871,8 +1872,8 @@ def tn_print_all():
             pdf_bytes = _tn_get_label_pdf(fo['id'], cfg)
             zpl = pdf_to_zpl(
                 pdf_bytes,
-                width_mm=float(cfg.get('label_width_mm', 100)),
-                height_mm=float(cfg.get('label_height_mm', 150)),
+                width_mm=100.0,
+                height_mm=150.0,
                 dpi=int(cfg.get('dpi', 203)),
             )
             combined += zpl

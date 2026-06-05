@@ -443,6 +443,23 @@ def _poll_worker():
                 o['_shipment'] = info
                 printable.append(o)
 
+            # Agrupar por shipment_id (mismo fix que en /ml/orders)
+            from collections import defaultdict as _dd2
+            _sg = _dd2(list)
+            for o in printable:
+                _k = str(o.get('shipping', {}).get('id') or f'_ns_{o["id"]}')
+                _sg[_k].append(o)
+            _merged = []
+            for _k, _grp in _sg.items():
+                if len(_grp) == 1:
+                    _merged.append(_grp[0])
+                else:
+                    _base = dict(_grp[0])
+                    _base['order_items'] = [i for o in _grp for i in (o.get('order_items') or [])]
+                    _base['_merged_order_ids'] = [o['id'] for o in _grp]
+                    _merged.append(_base)
+            printable = _merged
+
             current_ids = {o['id'] for o in printable}
             now = time.time()
 
@@ -993,7 +1010,29 @@ def ml_orders():
             o['_shipment'] = info
             printable.append(o)
 
-        return jsonify({'ok': True, 'orders': printable, 'total': len(printable)})
+        # Agrupar por shipment_id: ML crea un "pedido" por ítem pero comparten envío
+        # → combinar en una sola tarjeta con todos los ítems
+        from collections import defaultdict as _dd
+        ship_groups = _dd(list)
+        for o in printable:
+            sid = str(o.get('shipping', {}).get('id') or f'_ns_{o["id"]}')
+            ship_groups[sid].append(o)
+
+        merged = []
+        for sid_key, group in ship_groups.items():
+            if len(group) == 1:
+                merged.append(group[0])
+            else:
+                # Tomar el primer pedido como base y combinar todos los order_items
+                base = dict(group[0])
+                combined_items = []
+                for o in group:
+                    combined_items.extend(o.get('order_items') or [])
+                base['order_items'] = combined_items
+                base['_merged_order_ids'] = [o['id'] for o in group]
+                merged.append(base)
+
+        return jsonify({'ok': True, 'orders': merged, 'total': len(merged)})
     except Exception as e:
         return jsonify({'ok': False, 'error': str(e)}), 500
 

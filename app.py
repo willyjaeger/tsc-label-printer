@@ -473,7 +473,13 @@ def _poll_worker():
                 _poll['status']      = 'idle'
                 _poll['error']       = ''
 
-            new_orders = [o for o in printable if o['id'] not in known_ids]
+            # IDs de shipments ya impresos (persiste entre reinicios del servidor)
+            printed_ship_ids = {str(o.get('shipment_id')) for o in load_orders()}
+            new_orders = [
+                o for o in printable
+                if o['id'] not in known_ids
+                and str(o.get('shipping', {}).get('id', '')) not in printed_ship_ids
+            ]
 
             # Detectar pedidos impresos que desaparecieron (posible cancelación)
             if was_initialized:

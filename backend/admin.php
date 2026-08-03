@@ -2,15 +2,70 @@
 require 'config.php';
 session_start();
 
+// ── Protección contra fuerza bruta en el login ────────────────────────────────
+// Sin esto, cualquiera puede probar contraseñas sin límite. Bloquea por IP
+// tras varios intentos fallidos seguidos, con un archivo simple (no hace falta
+// tabla nueva en la DB).
+define('LOGIN_MAX_ATTEMPTS', 5);
+define('LOGIN_LOCKOUT_SECONDS', 900); // 15 minutos
+
+function _login_attempts_file() {
+    return __DIR__ . '/.login_attempts.json';
+}
+
+function _login_attempts_load() {
+    $f = _login_attempts_file();
+    if (!file_exists($f)) return [];
+    $data = json_decode(file_get_contents($f), true);
+    return is_array($data) ? $data : [];
+}
+
+function _login_attempts_save($data) {
+    file_put_contents(_login_attempts_file(), json_encode($data), LOCK_EX);
+}
+
+function _login_ip() {
+    return $_SERVER['REMOTE_ADDR'] ?? 'unknown';
+}
+
+function login_is_locked_out() {
+    $data = _login_attempts_load();
+    $ip   = _login_ip();
+    if (!isset($data[$ip])) return false;
+    if ($data[$ip]['count'] < LOGIN_MAX_ATTEMPTS) return false;
+    return (time() - $data[$ip]['last']) < LOGIN_LOCKOUT_SECONDS;
+}
+
+function login_register_failure() {
+    $data = _login_attempts_load();
+    $ip   = _login_ip();
+    if (!isset($data[$ip]) || (time() - $data[$ip]['last']) > LOGIN_LOCKOUT_SECONDS) {
+        $data[$ip] = ['count' => 0, 'last' => time()];
+    }
+    $data[$ip]['count']++;
+    $data[$ip]['last'] = time();
+    _login_attempts_save($data);
+}
+
+function login_register_success() {
+    $data = _login_attempts_load();
+    unset($data[_login_ip()]);
+    _login_attempts_save($data);
+}
+
 // ── Acciones POST ────────────────────────────────────────────────────────────
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     // Login
     if (isset($_POST['password'])) {
-        if ($_POST['password'] === ADMIN_PASS) {
+        if (login_is_locked_out()) {
+            $login_error = 'Demasiados intentos fallidos. Esperá unos minutos antes de volver a intentar.';
+        } elseif (password_verify($_POST['password'], ADMIN_PASS_HASH)) {
+            login_register_success();
             $_SESSION['auth'] = true;
         } else {
+            login_register_failure();
             $login_error = 'Contraseña incorrecta';
         }
     }
@@ -37,29 +92,37 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         // Revocar / reactivar
         if (isset($_POST['action']) && $_POST['action'] === 'toggle_status') {
-            $id = (int)$_POST['id'];
-            $db->query("UPDATE licenses SET status = IF(status='active','revoked','active') WHERE id = $id");
+            $id   = (int)$_POST['id'];
+            $stmt = $db->prepare("UPDATE licenses SET status = IF(status='active','revoked','active') WHERE id = ?");
+            $stmt->bind_param('i', $id);
+            $stmt->execute();
         }
 
         // Resetear fingerprint (permite mover licencia a otra PC)
         if (isset($_POST['action']) && $_POST['action'] === 'reset_fp') {
-            $id = (int)$_POST['id'];
-            $db->query("UPDATE licenses SET fingerprint = NULL, activated_at = NULL WHERE id = $id");
+            $id   = (int)$_POST['id'];
+            $stmt = $db->prepare("UPDATE licenses SET fingerprint = NULL, activated_at = NULL WHERE id = ?");
+            $stmt->bind_param('i', $id);
+            $stmt->execute();
             $msg = 'Huella de máquina reseteada. El cliente puede activar en una nueva PC.';
         }
 
         // Eliminar
         if (isset($_POST['action']) && $_POST['action'] === 'delete') {
-            $id = (int)$_POST['id'];
-            $db->query("DELETE FROM licenses WHERE id = $id");
+            $id   = (int)$_POST['id'];
+            $stmt = $db->prepare("DELETE FROM licenses WHERE id = ?");
+            $stmt->bind_param('i', $id);
+            $stmt->execute();
         }
 
         // Extender vencimiento
         if (isset($_POST['action']) && $_POST['action'] === 'extend') {
             $id  = (int)$_POST['id'];
-            $exp = $db->real_escape_string(trim($_POST['expires_at'] ?? ''));
+            $exp = trim($_POST['expires_at'] ?? '');
             if ($exp) {
-                $db->query("UPDATE licenses SET expires_at = '$exp', status = 'active' WHERE id = $id");
+                $stmt = $db->prepare("UPDATE licenses SET expires_at = ?, status = 'active' WHERE id = ?");
+                $stmt->bind_param('si', $exp, $id);
+                $stmt->execute();
                 $msg = 'Vencimiento actualizado.';
             }
         }

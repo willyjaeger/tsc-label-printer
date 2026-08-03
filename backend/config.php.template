@@ -1,0 +1,36 @@
+<?php
+// EnvioBot — Config del backend de licencias.
+// Completar y subir como backend/config.php → en el servidor debe quedar
+// en la MISMA carpeta que activate.php / validate.php / admin.php (enviobot/).
+// Este archivo NUNCA va al repo de Git (ya está en .gitignore).
+
+// Datos de conexión a la base de datos (los mismos que usás en phpMyAdmin)
+define('DB_HOST', 'localhost');
+define('DB_USER', 'TU_USUARIO_DB');
+define('DB_PASS', 'TU_PASSWORD_DB');
+define('DB_NAME', 'po000380_envios');   // el nombre que ya tenías, ajustar si es otro
+
+// Debe coincidir EXACTO con _LICENSE_SECRET en app.py — si no, la app
+// recibe {"valid":false,"reason":"forbidden"} de validate.php.
+define('API_SECRET', 'eb_9k4m2p7n1q8r5t3vw6x');
+
+// Contraseña para entrar a admin.php — NO se guarda en texto plano, se guarda
+// su hash (bcrypt). Para generarla, corré esto en tu PC reemplazando
+// TU_CONTRASENA por la que quieras usar, y pegá el resultado completo
+// (empieza con $2y$) en ADMIN_PASS_HASH de abajo:
+//
+//   php -r "echo password_hash('TU_CONTRASENA', PASSWORD_BCRYPT), PHP_EOL;"
+//
+// Con Laragon instalado, el ejecutable de PHP suele estar en algo como:
+//   C:\laragon\bin\php\php-8.3.30-Win32-vs16-x64\php.exe
+define('ADMIN_PASS_HASH', 'PEGAR_ACA_EL_HASH_GENERADO');
+
+function db_connect() {
+    $db = new mysqli(DB_HOST, DB_USER, DB_PASS, DB_NAME);
+    if ($db->connect_error) {
+        http_response_code(500);
+        die(json_encode(['ok' => false, 'error' => 'db_connect_failed']));
+    }
+    $db->set_charset('utf8mb4');
+    return $db;
+}

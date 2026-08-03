@@ -70,7 +70,6 @@ REDIRECT_URI = 'https://willyjaeger.github.io/tsc-label-printer/callback.html'
 # ── Licencias ──────────────────────────────────────────────────────────────────
 _LICENSE_SERVER = 'https://logax.com.ar/enviobot'
 _LICENSE_SECRET = 'eb_9k4m2p7n1q8r5t3vw6x'
-_OWNER_KEY      = 'VJ2S-PJLG-MFLY-AXSD'
 _LIC_CACHE_TTL  = 3600        # re-validar cada 1 hora
 _LIC_GRACE_H    = 48          # horas offline permitidas antes de bloquear
 

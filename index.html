@@ -348,7 +348,8 @@ footer { text-align:center; font-size:.7rem; color:var(--text2); margin-top:20px
     <h1>EnvioBot</h1>
     <div class="sub">Impresión automática de pedidos &nbsp;·&nbsp; MercadoLibre &nbsp;·&nbsp; TiendaNube</div>
   </div>
-  <div style="margin-left:auto">
+  <div style="margin-left:auto;display:flex;align-items:center;gap:8px">
+    <span id="sseBadge" class="lic-badge lic-err" style="display:none">⚠ Sin conexión en vivo</span>
     <span id="licenseBadge" class="lic-badge" style="opacity:.4">Verificando…</span>
   </div>
 </header>
@@ -516,6 +517,9 @@ footer { text-align:center; font-size:.7rem; color:var(--text2); margin-top:20px
 
   <!-- Alertas de posible cancelación -->
   <div id="cancelAlertsArea"></div>
+
+  <!-- Alertas de auto-impresión fallida -->
+  <div id="printErrorAlertsArea"></div>
 
   <!-- Estado de login / contenido de orders -->
   <div id="ordersArea">
@@ -887,6 +891,17 @@ function toast(msg, type = 'ok') {
   document.body.appendChild(t);
   setTimeout(() => { t.style.opacity = '0'; setTimeout(() => t.remove(), 380); }, 3200);
 }
+
+// Red de seguridad: sin esto, un error JS no capturado deja la pantalla "rota"
+// sin ningún indicio visible para el operador.
+window.addEventListener('error', e => {
+  console.error('Error no capturado:', e.error || e.message);
+  toast('✗ Ocurrió un error inesperado. Si la pantalla se ve rara, recargá la app.', 'err');
+});
+window.addEventListener('unhandledrejection', e => {
+  console.error('Promesa rechazada sin manejar:', e.reason);
+  toast('✗ Ocurrió un error inesperado. Si la pantalla se ve rara, recargá la app.', 'err');
+});
 
 // ── ML Auth ───────────────────────────────────────────
 async function checkAuthStatus() {
@@ -1404,9 +1419,16 @@ let apInitialized = false;
 let apError       = '';
 let selectedShipIds = new Set(); // IDs de envíos seleccionados para imprimir
 
+function setSseBadge(connected) {
+  const b = document.getElementById('sseBadge');
+  if (!b) return;
+  b.style.display = connected ? 'none' : '';
+}
+
 function connectSSE() {
   if (sseSource || !mlUser) return;
   sseSource = new EventSource(API + '/ml/events');
+  sseSource.onopen = () => setSseBadge(true);
 
   sseSource.addEventListener('poll_status', e => {
     const d = JSON.parse(e.data);
@@ -1453,6 +1475,8 @@ function connectSSE() {
   sseSource.addEventListener('print_error', e => {
     const d = JSON.parse(e.data);
     console.warn('Auto-print error — envío', d.shipment_id, ':', d.error);
+    toast('✗ Falló la auto-impresión de un pedido — ver aviso arriba', 'err');
+    addPrintErrorAlert(d.order_id, d.shipment_id, d.buyer, d.error);
   });
 
   sseSource.addEventListener('possible_cancel', e => {
@@ -1472,12 +1496,14 @@ function connectSSE() {
   sseSource.onerror = () => {
     sseSource.close();
     sseSource = null;
+    setSseBadge(false);
     setTimeout(() => { if (mlUser) connectSSE(); }, 5000);
   };
 }
 
 function disconnectSSE() {
   if (sseSource) { sseSource.close(); sseSource = null; }
+  setSseBadge(true); // desconexión intencional (logout) no es una falla a mostrar
 }
 
 // Actualiza el "hace X" cada 15 s sin re-renderizar todo
@@ -1620,6 +1646,37 @@ function renderCancelAlerts() {
         <div class="cancel-alert-sub">${a.buyer ? `Comprador: ${a.buyer} · ` : ''}Envío: ${a.shipmentId || '—'} · Ya no aparece en MercadoLibre</div>
       </div>
       <button class="cancel-alert-close" onclick="dismissCancelAlert('${a.orderId}')">✓ Entendido</button>
+    </div>`).join('');
+}
+
+// ── Alertas de auto-impresión fallida ─────────────────────────────────────────
+// Persistentes (no se auto-ocultan como el toast) para que un pedido pago no
+// impreso nunca pase desapercibido — el operador tiene que confirmarlas a mano.
+const _printErrorAlerts = new Map(); // shipmentId → datos
+
+function addPrintErrorAlert(orderId, shipmentId, buyer, error) {
+  const key = String(shipmentId || orderId);
+  _printErrorAlerts.set(key, { orderId, shipmentId, buyer, error });
+  renderPrintErrorAlerts();
+}
+
+function dismissPrintErrorAlert(key) {
+  _printErrorAlerts.delete(key);
+  renderPrintErrorAlerts();
+}
+
+function renderPrintErrorAlerts() {
+  const area = document.getElementById('printErrorAlertsArea');
+  if (!area) return;
+  if (!_printErrorAlerts.size) { area.innerHTML = ''; return; }
+  area.innerHTML = [..._printErrorAlerts.entries()].map(([key, a]) => `
+    <div class="cancel-alert">
+      <span class="cancel-alert-icon">🖨️</span>
+      <div class="cancel-alert-body">
+        <div class="cancel-alert-title">No se pudo imprimir${a.orderId ? ` el pedido #${a.orderId}` : ''}</div>
+        <div class="cancel-alert-sub">${a.buyer ? `Comprador: ${a.buyer} · ` : ''}Envío: ${a.shipmentId || '—'} · ${a.error || 'Error desconocido'} · imprimilo a mano desde Despachar</div>
+      </div>
+      <button class="cancel-alert-close" onclick="dismissPrintErrorAlert('${key}')">✓ Entendido</button>
     </div>`).join('');
 }
 

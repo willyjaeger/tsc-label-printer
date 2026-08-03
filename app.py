@@ -4,7 +4,7 @@ import json
 import os
 import sys
 import threading
-import webbrowser
+import webview
 import time
 import secrets
 import hashlib
@@ -656,6 +656,8 @@ def _poll_worker():
                         sid = o.get('shipping', {}).get('id')
                         if not sid:
                             continue
+                        buyer_name = (o.get('_shipment') or {}).get('receiver_name') \
+                                     or (o.get('buyer') or {}).get('nickname', '')
                         try:
                             r = http.get(
                                 f'{ML_API}/shipment_labels',
@@ -668,13 +670,19 @@ def _poll_worker():
                                 r.headers.get('content-type', ''),
                             )
                             if err:
-                                _push_event('print_error', {'shipment_id': sid, 'error': err})
+                                _push_event('print_error', {
+                                    'shipment_id': sid, 'order_id': o['id'],
+                                    'buyer': buyer_name, 'error': err,
+                                })
+                                tray_notify(
+                                    '⚠️ Auto-impresión falló',
+                                    f'Pedido {buyer_name or ("#" + str(o["id"]))} no se pudo imprimir: {err}',
+                                )
                                 continue
                             order_data = {
                                 'order_id':    o['id'],
                                 'shipment_id': str(sid),
-                                'buyer':       (o.get('_shipment') or {}).get('receiver_name')
-                                               or (o.get('buyer') or {}).get('nickname', ''),
+                                'buyer':       buyer_name,
                                 'items':       [
                                     {'qty': i['quantity'],
                                      'title': (i.get('item') or {}).get('title', '')}
@@ -692,7 +700,14 @@ def _poll_worker():
                                 'buyer':       order_data['buyer'],
                             })
                         except Exception as pe:
-                            _push_event('print_error', {'shipment_id': sid, 'error': str(pe)})
+                            _push_event('print_error', {
+                                'shipment_id': sid, 'order_id': o['id'],
+                                'buyer': buyer_name, 'error': str(pe),
+                            })
+                            tray_notify(
+                                '⚠️ Auto-impresión falló',
+                                f'Pedido {buyer_name or ("#" + str(o["id"]))} no se pudo imprimir: {pe}',
+                            )
 
                 _push_event('poll_status', {
                     'status': 'idle', 'checked_at': now, 'count': len(printable),
@@ -2162,7 +2177,8 @@ def run_flask():
 
 # ── System tray ────────────────────────────────────────────────────────────────
 
-_tray_icon = None   # referencia global para notificaciones desde el poll worker
+_tray_icon = None       # referencia global para notificaciones desde el poll worker
+_webview_window = None  # referencia global a la ventana nativa (pywebview)
 
 
 def tray_notify(title, message):
@@ -2200,8 +2216,9 @@ def _run_tray():
     global _tray_icon
     import pystray
 
-    def open_browser(icon, item):
-        webbrowser.open('http://localhost:5050')
+    def show_window(icon, item):
+        if _webview_window:
+            _webview_window.show()
 
     def get_status(item):
         with _poll_lock:
@@ -2217,7 +2234,7 @@ def _run_tray():
         return f'Monitoreo: activo{"  · Auto-imprimir" if auto_p else ""}{ago}'
 
     menu = pystray.Menu(
-        pystray.MenuItem('Abrir panel de pedidos', open_browser, default=True),
+        pystray.MenuItem('Abrir panel de pedidos', show_window, default=True),
         pystray.Menu.SEPARATOR,
         pystray.MenuItem(get_status, None, enabled=False),
         pystray.Menu.SEPARATOR,
@@ -2259,24 +2276,42 @@ def _kill_existing_on_port(port=5050):
 
 
 def start():
+    global _webview_window
     _kill_existing_on_port(5050)
     threading.Thread(target=run_flask, daemon=True).start()
     threading.Thread(target=_poll_worker, daemon=True).start()
     time.sleep(1.2)
-    webbrowser.open('http://localhost:5050')
 
-    if getattr(sys, 'frozen', False):
-        _run_tray()
+    frozen = getattr(sys, 'frozen', False)
+
+    # La bandeja corre en su propio hilo: pywebview necesita el hilo principal para sí mismo.
+    if frozen:
+        threading.Thread(target=_run_tray, daemon=True).start()
     else:
         print("=" * 50)
         print("  EnvioBot — http://localhost:5050")
-        print("  Ctrl+C para cerrar")
+        print("  Cerrá la ventana o Ctrl+C para salir")
         print("=" * 50)
-        try:
-            while True:
-                time.sleep(1)
-        except KeyboardInterrupt:
-            pass
+
+    _webview_window = webview.create_window(
+        'EnvioBot', 'http://localhost:5050',
+        width=1180, height=820, min_size=(900, 650),
+    )
+
+    def _on_closing():
+        # Empaquetado: la X minimiza a la bandeja, el monitoreo sigue corriendo.
+        # "Salir" desde la bandeja es la única forma de terminar el proceso.
+        if frozen:
+            _webview_window.hide()
+            return False
+        return True
+
+    _webview_window.events.closing += _on_closing
+
+    webview.start()  # bloquea el hilo principal hasta que la ventana se cierre de verdad
+
+    if not frozen:
+        os._exit(0)
 
 
 if __name__ == '__main__':

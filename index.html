@@ -1386,6 +1386,7 @@ function renderOrdersArea(loading = false, errorMsg = null) {
         <div class="order-head">
           ${shipId ? `<input type="checkbox" class="order-chk" ${chkd?'checked':''} onchange="toggleSelectOrder('${shipId}', this.checked)" title="Seleccionar para imprimir">` : ''}
           <span class="order-id">#${order.id}</span>
+          ${printed ? `<span class="badge badge-ok">🖨️ Etiqueta impresa</span>` : ''}
           <span class="order-time" style="margin-left:auto">${dateStr}</span>
         </div>
         <div class="order-buyer">${buyer}</div>

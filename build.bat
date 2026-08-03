@@ -32,6 +32,7 @@ echo  [3/3] Compilando...
 python -m PyInstaller ^
     --onefile ^
     --noconsole ^
+    --icon "assets\icon.ico" ^
     --add-data "index.html;." ^
     --hidden-import=flask ^
     --hidden-import=werkzeug ^

@@ -9,6 +9,9 @@ config.json
 # Datos locales de pedidos (cada PC tiene los suyos)
 orders.json
 
+# Log de runtime (cada PC tiene el suyo)
+enviobot.log*
+
 # Claude Code settings locales
 .claude/settings.local.json
 

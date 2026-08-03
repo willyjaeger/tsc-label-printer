@@ -30,6 +30,21 @@ else:
 CONFIG_FILE = os.path.join(CONFIG_DIR, 'config.json')
 ORDERS_FILE = os.path.join(CONFIG_DIR, 'orders.json')
 
+# ── Logging a archivo ──────────────────────────────────────────────────────────
+# Rastro mínimo para soporte remoto: "mandame el archivo enviobot.log" en vez de
+# necesitar acceso a la PC del operador para ver qué pasó.
+import logging
+from logging.handlers import RotatingFileHandler
+
+logger = logging.getLogger('enviobot')
+logger.setLevel(logging.INFO)
+_log_handler = RotatingFileHandler(
+    os.path.join(CONFIG_DIR, 'enviobot.log'),
+    maxBytes=1_000_000, backupCount=2, encoding='utf-8',
+)
+_log_handler.setFormatter(logging.Formatter('%(asctime)s %(levelname)s %(message)s'))
+logger.addHandler(_log_handler)
+
 DEFAULT_CONFIG = {
     'ip': '192.168.1.100',
     'port': 9100,
@@ -338,42 +353,63 @@ def _sync_orders_in_transit(token):
 
 # ── Printer ────────────────────────────────────────────────────────────────────
 
-def send_to_printer(ip, port, data):
-    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    s.settimeout(10)
-    try:
-        s.connect((ip, int(port)))
-        if isinstance(data, str):
-            data = data.encode('utf-8')
-        s.sendall(data)
-    finally:
-        s.close()
-
-
-def query_printer(ip, port, cmd, read_bytes=512, timeout=5):
-    """Envía un comando y lee la respuesta del printer. Devuelve bytes o None."""
-    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    s.settimeout(timeout)
-    try:
-        s.connect((ip, int(port)))
-        if isinstance(cmd, str):
-            cmd = cmd.encode('utf-8')
-        s.sendall(cmd)
-        s.settimeout(2)
-        chunks = []
+def send_to_printer(ip, port, data, retries=2, retry_delay=0.6):
+    """Envía datos crudos a la impresora por TCP. Reintenta ante fallas transitorias
+    de conexión (la impresora TSC en red a veces tarda en aceptar una conexión nueva
+    justo después de la anterior) antes de dejar propagar la excepción al llamador."""
+    if isinstance(data, str):
+        data = data.encode('utf-8')
+    last_err = None
+    for attempt in range(retries + 1):
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.settimeout(10)
         try:
-            while True:
-                chunk = s.recv(read_bytes)
-                if not chunk:
-                    break
-                chunks.append(chunk)
-        except socket.timeout:
-            pass
-        return b''.join(chunks) if chunks else None
-    except Exception:
-        return None
-    finally:
-        s.close()
+            s.connect((ip, int(port)))
+            s.sendall(data)
+            return
+        except (socket.timeout, ConnectionRefusedError, OSError) as e:
+            last_err = e
+            if attempt < retries:
+                logger.warning('send_to_printer: intento %d/%d falló (%s), reintentando…',
+                                attempt + 1, retries + 1, e)
+                time.sleep(retry_delay)
+        finally:
+            s.close()
+    logger.error('send_to_printer: sin éxito tras %d intentos — %s', retries + 1, last_err)
+    raise last_err
+
+
+def query_printer(ip, port, cmd, read_bytes=512, timeout=5, retries=1, retry_delay=0.5):
+    """Envía un comando y lee la respuesta del printer. Devuelve bytes o None
+    (None = no se pudo conectar/leer nada; se deja registro en el log de la causa
+    real para poder diferenciar impresora apagada de timeout de respuesta vacía)."""
+    for attempt in range(retries + 1):
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.settimeout(timeout)
+        try:
+            s.connect((ip, int(port)))
+            if isinstance(cmd, str):
+                cmd = cmd.encode('utf-8')
+            s.sendall(cmd)
+            s.settimeout(2)
+            chunks = []
+            try:
+                while True:
+                    chunk = s.recv(read_bytes)
+                    if not chunk:
+                        break
+                    chunks.append(chunk)
+            except socket.timeout:
+                pass
+            return b''.join(chunks) if chunks else None
+        except Exception as e:
+            logger.warning('query_printer: intento %d/%d falló (%s)',
+                            attempt + 1, retries + 1, e)
+            if attempt < retries:
+                time.sleep(retry_delay)
+        finally:
+            s.close()
+    return None
 
 
 def parse_hs_dimensions(hs_response, dpi=203):
@@ -428,6 +464,12 @@ def parse_hs_gap(hs_response):
 
 # ── ML Auth helpers ────────────────────────────────────────────────────────────
 
+# Estado del token ML en memoria: distingue "hay que reconectar la cuenta"
+# (refresh token revocado/inválido) de "problema de red transitorio" — ambos
+# casos antes colapsaban en el mismo None sin ninguna pista de la causa.
+_ml_token_state = {'needs_reauth': False}
+
+
 def get_valid_token():
     """Devuelve un access_token válido, refrescando si es necesario."""
     cfg = load_config()
@@ -450,13 +492,21 @@ def _refresh_token(cfg):
         }, timeout=15)
         data = r.json()
         if 'access_token' not in data:
+            error = data.get('error', '')
+            if error in ('invalid_grant', 'invalid_client', 'unauthorized_client'):
+                _ml_token_state['needs_reauth'] = True
+                logger.warning('ML refresh_token rechazado (%s) — la cuenta necesita reconectarse', error)
+            else:
+                logger.warning('ML refresh_token: respuesta sin access_token: %s', data)
             return None
+        _ml_token_state['needs_reauth'] = False
         cfg['ml_access_token']    = data['access_token']
         cfg['ml_refresh_token']   = data.get('refresh_token', cfg.get('ml_refresh_token'))
         cfg['ml_token_expires_at'] = time.time() + data.get('expires_in', 21600)
         save_config(cfg)
         return cfg['ml_access_token']
-    except Exception:
+    except Exception as e:
+        logger.warning('ML refresh_token: error de red — %s', e)
         return None
 
 
@@ -503,13 +553,16 @@ def _poll_worker():
         token = get_valid_token()
         if not token:
             now = time.time()
+            msg = ('Tu sesión de MercadoLibre expiró — reconectá la cuenta en la pestaña ML.'
+                   if _ml_token_state.get('needs_reauth')
+                   else 'Sin conexión con MercadoLibre, reintentando…')
             with _poll_lock:
                 _poll['status']     = 'error'
-                _poll['error']      = 'Sin sesión ML activa'
+                _poll['error']      = msg
                 _poll['last_check'] = now
                 _poll['checked_at'] = now
             _push_event('poll_status', {'status': 'error',
-                                        'error':  'Sin sesión ML activa',
+                                        'error':  msg,
                                         'checked_at': now})
             continue
 
@@ -670,6 +723,7 @@ def _poll_worker():
                                 r.headers.get('content-type', ''),
                             )
                             if err:
+                                logger.warning('auto-print: shipment %s (%s) — %s', sid, buyer_name, err)
                                 _push_event('print_error', {
                                     'shipment_id': sid, 'order_id': o['id'],
                                     'buyer': buyer_name, 'error': err,
@@ -700,6 +754,7 @@ def _poll_worker():
                                 'buyer':       order_data['buyer'],
                             })
                         except Exception as pe:
+                            logger.exception('auto-print: excepción imprimiendo shipment %s (%s)', sid, buyer_name)
                             _push_event('print_error', {
                                 'shipment_id': sid, 'order_id': o['id'],
                                 'buyer': buyer_name, 'error': str(pe),
@@ -726,6 +781,7 @@ def _poll_worker():
 
         except Exception as e:
             now = time.time()
+            logger.exception('_poll_worker: fallo en el ciclo de polling')
             with _poll_lock:
                 _poll['status']     = 'error'
                 _poll['error']      = str(e)
@@ -1866,12 +1922,16 @@ def _tn_api(method, path, cfg, **kwargs):
 
 
 def _tn_fetch_fulfillment_orders(order_id, cfg):
-    """Devuelve lista de fulfillment orders de un pedido TN, o [] si no hay."""
-    try:
-        r = _tn_api('GET', f'/orders/{order_id}/fulfillment-orders', cfg)
-        return r.json() if r.status_code == 200 else []
-    except Exception:
+    """Devuelve lista de fulfillment orders de un pedido TN.
+    [] solo cuando TiendaNube confirma que no hay ninguno (404) — cualquier otra
+    falla (red, timeout, 5xx) se propaga como excepción en vez de disfrazarse de
+    'sin pedidos', que antes hacía pensar que el pedido no era de Envío Nube."""
+    r = _tn_api('GET', f'/orders/{order_id}/fulfillment-orders', cfg)
+    if r.status_code == 200:
+        return r.json()
+    if r.status_code == 404:
         return []
+    raise RuntimeError(f'TiendaNube no respondió bien al buscar el pedido (HTTP {r.status_code})')
 
 
 def _tn_get_label_pdf(fulfillment_order_id: str, cfg) -> bytes:
@@ -2069,7 +2129,8 @@ def tn_print_all():
             )
             combined += zpl
             printed  += 1
-        except Exception:
+        except Exception as e:
+            logger.warning('tn_print_all: falló pedido %s — %s', oid, e)
             failed.append(str(oid))
 
     if not combined:

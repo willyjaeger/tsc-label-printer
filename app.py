@@ -2227,13 +2227,16 @@ def ml_autoprint_set():
             _poll['interval'] = max(30, int(body['interval']))
         enabled, auto_print, interval = _poll['enabled'], _poll['auto_print'], _poll['interval']
 
-    # Persistir: si la app se cierra de verdad (crash, "Salir", reinicio de
-    # la PC) el monitoreo vuelve a arrancar solo en vez de quedar apagado en
-    # silencio hasta que alguien note que no se está imprimiendo nada.
+    _update_tray_icon()
+
+    # Solo se recuerda el intervalo elegido (preferencia sin sorpresas). El
+    # on/off NO se persiste a propósito: si el proceso se cierra de verdad
+    # (crash, "Salir", apagado/reinicio de la PC) el monitoreo tiene que
+    # arrancar apagado la próxima vez — cerrar la ventana con la X no cuenta
+    # como "cerrar de verdad" (se minimiza a la bandeja, el proceso sigue
+    # vivo y el estado ya sigue tal cual sin necesidad de guardar nada).
     cfg = load_config()
-    cfg['_autoprint_enabled']    = enabled
-    cfg['_autoprint_auto_print'] = auto_print
-    cfg['_autoprint_interval']   = interval
+    cfg['_autoprint_interval'] = interval
     save_config(cfg)
 
     return jsonify({'ok': True, 'enabled': enabled,
@@ -2263,8 +2266,10 @@ def tray_notify(title, message):
         pass
 
 
-def _make_tray_image():
-    """Crea el ícono de 64×64 px para la bandeja del sistema."""
+def _make_tray_image(active=False):
+    """Crea el ícono de 64×64 px para la bandeja del sistema.
+    La luz indicadora se ve verde solo si el monitoreo está activo — así el
+    operador sabe de un vistazo, sin abrir la ventana, si está funcionando."""
     from PIL import Image, ImageDraw
     img  = Image.new('RGBA', (64, 64), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
@@ -2279,9 +2284,22 @@ def _make_tray_image():
     # Líneas de código de barras en la etiqueta
     for x in (22, 26, 30, 34, 38, 42):
         draw.line([(x, 44), (x, 52)], fill='#333', width=2)
-    # Luz indicadora verde
-    draw.ellipse([44, 29, 51, 36], fill='#4caf88')
+    # Luz indicadora: verde = monitoreando, gris = inactivo
+    draw.ellipse([44, 29, 51, 36], fill='#4caf88' if active else '#555555')
     return img
+
+
+def _update_tray_icon():
+    """Refleja en el ícono de la bandeja si el monitoreo está activo o no.
+    Se llama cada vez que cambia _poll['enabled'] (activar/detener)."""
+    if not _tray_icon:
+        return
+    try:
+        with _poll_lock:
+            active = _poll['enabled']
+        _tray_icon.icon = _make_tray_image(active)
+    except Exception:
+        pass
 
 
 def _run_tray():
@@ -2314,9 +2332,12 @@ def _run_tray():
         pystray.MenuItem('Salir', lambda icon, item: (icon.stop(), os._exit(0))),
     )
 
+    with _poll_lock:
+        initial_active = _poll['enabled']
+
     _tray_icon = pystray.Icon(
         name    = 'enviobot',
-        icon    = _make_tray_image(),
+        icon    = _make_tray_image(initial_active),
         title   = 'EnvioBot',
         menu    = menu,
     )
@@ -2349,21 +2370,14 @@ def _kill_existing_on_port(port=5050):
 
 
 def _restore_poll_state():
-    """Restaura si el monitoreo/auto-impresión estaban activos antes del último
-    cierre — así un reinicio completo del proceso (crash, 'Salir', reinicio de
-    la PC) no lo deja apagado en silencio; sigue tal como estaba hasta que el
-    operador lo detenga a propósito."""
+    """Restaura solo el intervalo elegido (preferencia). El monitoreo arranca
+    apagado siempre que el PROCESO se reinicia de verdad (crash, 'Salir',
+    apagado/reinicio de la PC) — a propósito, para no auto-imprimir sin que
+    el operador lo haya prendido de nuevo él mismo. Cerrar la ventana con la
+    X no pasa por acá: el proceso sigue vivo y el estado ya sigue como estaba."""
     cfg = load_config()
     with _poll_lock:
-        _poll['enabled']    = bool(cfg.get('_autoprint_enabled', False))
-        _poll['auto_print'] = bool(cfg.get('_autoprint_auto_print', False))
-        _poll['interval']   = max(30, int(cfg.get('_autoprint_interval', 60)))
-        if _poll['enabled']:
-            # Igual que al activarlo a mano: primera pasada solo hace snapshot,
-            # no imprime retroactivamente pedidos que ya estaban pendientes.
-            _poll['initialized'] = False
-            _poll['known_ids']   = set()
-            _poll['last_check']  = 0.0
+        _poll['interval'] = max(30, int(cfg.get('_autoprint_interval', 60)))
 
 
 def start():

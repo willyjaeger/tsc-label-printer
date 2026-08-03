@@ -1159,6 +1159,10 @@ def _fetch_shipment(shipment_id, token):
         return shipment_id, {
             'logistic_type':    d.get('logistic_type', ''),
             'status':           d.get('status', ''),
+            # Fuente de verdad de si la etiqueta ya se imprimió: la marca ML,
+            # no el estado local del navegador (que puede estar desactualizado
+            # si se imprimió desde otro dispositivo/sesión).
+            'substatus':        d.get('substatus', ''),
             'receiver_name':    addr.get('receiver_name', ''),
             'street':           f"{addr.get('street_name','')} {addr.get('street_number','')}".strip(),
             'city':             addr.get('city', {}).get('name', ''),

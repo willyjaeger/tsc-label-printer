@@ -593,6 +593,17 @@ function markPrinted(id) {
 }
 function isPrinted(id) { return printedSet.has(String(id)); }
 
+// La app nunca "supone" que algo está impreso por su cuenta: cada vez que
+// llegan pedidos frescos de ML, si ML dice substatus === 'printed' se suma
+// a lo ya sabido localmente (nunca se saca nada, solo se completa) — así una
+// etiqueta impresa desde otro dispositivo/sesión también se refleja acá.
+function syncPrintedFromML(orders) {
+  orders.forEach(o => {
+    const shipId = o.shipping?.id;
+    if (shipId && o._shipment?.substatus === 'printed') markPrinted(shipId);
+  });
+}
+
 // Guarda pedidos vistos en caché local (para mostrarlos aunque ML ya no los devuelva)
 function cacheOrders(orders) {
   const cache = JSON.parse(localStorage.getItem(CACHE_KEY) || '{}');
@@ -1057,6 +1068,7 @@ async function loadOrdersIfReady() {
     const d = await r.json();
     if (d.ok) {
       cacheOrders(d.orders);
+      syncPrintedFromML(d.orders);
       ordersData = d.orders;
       await loadLocalOrders();      // refresca En camino con estados actualizados de ML
       seedLocalOrdersFromCache();   // migra pedidos viejos del browser a orders.json

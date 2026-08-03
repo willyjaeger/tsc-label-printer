@@ -1334,8 +1334,16 @@ def _build_combo_zpl(order_data, ml_zpl_bytes, cfg):
     ml_top_strip = min(ml_y_vals) if ml_y_vals else 0
     ml_offset    = die_dots + round(5 * dpm)   # 5mm de gap entre troquel y envío
 
+    # Escalar sección de envío para que entre con margen inferior (~8 mm)
+    bottom_margin_dots = round(8 * dpm)
+    available_dots = total_dots - ml_offset - bottom_margin_dots
+    ml_max_y  = max(ml_y_vals) if ml_y_vals else round(ship_h_mm * dpm)
+    ml_span   = max(1, ml_max_y - ml_top_strip)
+    scale_y   = min(1.0, available_dots / ml_span)
+
     def shift_fo(m_):
-        y_new = int(m_.group(2)) - ml_top_strip + ml_offset
+        y_orig = int(m_.group(2)) - ml_top_strip
+        y_new  = round(y_orig * scale_y) + ml_offset
         return f'^FO{m_.group(1)},{max(0, y_new)}'
     ml_body = re.sub(r'\^FO(\d+),(\d+)', shift_fo, ml_body, flags=re.IGNORECASE)
 

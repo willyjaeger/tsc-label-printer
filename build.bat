@@ -16,7 +16,7 @@ if errorlevel 1 (
 )
 
 echo  [1/3] Instalando dependencias...
-pip install -q flask pyinstaller pymupdf Pillow requests pystray
+pip install -q flask pyinstaller pymupdf Pillow requests pystray pywebview
 if errorlevel 1 (
     echo  ERROR al instalar dependencias.
     pause
@@ -40,10 +40,15 @@ python -m PyInstaller ^
     --hidden-import=PIL.Image ^
     --hidden-import=pystray ^
     --hidden-import=pystray._win32 ^
+    --hidden-import=webview.platforms.edgechromium ^
+    --hidden-import=webview.platforms.winforms ^
     --collect-all=requests ^
     --collect-all=fitz ^
     --collect-all=PIL ^
     --collect-all=pystray ^
+    --collect-all=webview ^
+    --collect-all=clr_loader ^
+    --collect-all=pythonnet ^
     --name "EnvioBot" ^
     app.py
 

@@ -2225,10 +2225,19 @@ def ml_autoprint_set():
             _poll['auto_print'] = bool(body['auto_print'])
         if 'interval' in body:
             _poll['interval'] = max(30, int(body['interval']))
-    with _poll_lock:
-        return jsonify({'ok': True, 'enabled': _poll['enabled'],
-                        'auto_print': _poll['auto_print'],
-                        'interval': _poll['interval']})
+        enabled, auto_print, interval = _poll['enabled'], _poll['auto_print'], _poll['interval']
+
+    # Persistir: si la app se cierra de verdad (crash, "Salir", reinicio de
+    # la PC) el monitoreo vuelve a arrancar solo en vez de quedar apagado en
+    # silencio hasta que alguien note que no se está imprimiendo nada.
+    cfg = load_config()
+    cfg['_autoprint_enabled']    = enabled
+    cfg['_autoprint_auto_print'] = auto_print
+    cfg['_autoprint_interval']   = interval
+    save_config(cfg)
+
+    return jsonify({'ok': True, 'enabled': enabled,
+                    'auto_print': auto_print, 'interval': interval})
 
 
 # ── Startup ────────────────────────────────────────────────────────────────────
@@ -2339,9 +2348,28 @@ def _kill_existing_on_port(port=5050):
         pass
 
 
+def _restore_poll_state():
+    """Restaura si el monitoreo/auto-impresión estaban activos antes del último
+    cierre — así un reinicio completo del proceso (crash, 'Salir', reinicio de
+    la PC) no lo deja apagado en silencio; sigue tal como estaba hasta que el
+    operador lo detenga a propósito."""
+    cfg = load_config()
+    with _poll_lock:
+        _poll['enabled']    = bool(cfg.get('_autoprint_enabled', False))
+        _poll['auto_print'] = bool(cfg.get('_autoprint_auto_print', False))
+        _poll['interval']   = max(30, int(cfg.get('_autoprint_interval', 60)))
+        if _poll['enabled']:
+            # Igual que al activarlo a mano: primera pasada solo hace snapshot,
+            # no imprime retroactivamente pedidos que ya estaban pendientes.
+            _poll['initialized'] = False
+            _poll['known_ids']   = set()
+            _poll['last_check']  = 0.0
+
+
 def start():
     global _webview_window
     _kill_existing_on_port(5050)
+    _restore_poll_state()
     threading.Thread(target=run_flask, daemon=True).start()
     threading.Thread(target=_poll_worker, daemon=True).start()
     time.sleep(1.2)

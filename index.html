@@ -922,11 +922,34 @@ async function checkAuthStatus() {
     const r = await fetch(API + '/auth/status');
     const d = await r.json();
     mlUser = d.logged_in ? d : null;
-    if (mlUser) connectSSE();
+    if (mlUser) {
+      connectSSE();
+      await syncAutoprintStatus();
+    }
     renderOrdersArea();
   } catch(e) {
     mlUser = null;
     renderOrdersArea();
+  }
+}
+
+// Trae el estado real de monitoreo/auto-impresión al abrir la app — no espera
+// al próximo ciclo de SSE (que puede tardar hasta un intervalo entero) para
+// mostrar si ya estaba corriendo desde antes (persiste entre reinicios).
+async function syncAutoprintStatus() {
+  try {
+    const r = await fetch(API + '/ml/autoprint');
+    const d = await r.json();
+    apEnabled     = d.enabled     ?? apEnabled;
+    apAutoPrint   = d.auto_print  ?? apAutoPrint;
+    apInterval    = d.interval    ?? apInterval;
+    apStatus      = d.status      ?? apStatus;
+    apCheckedAt   = d.checked_at  ?? apCheckedAt;
+    apInitialized = d.initialized ?? apInitialized;
+    apError       = d.error       ?? apError;
+    renderAutoprintBar();
+  } catch(e) {
+    console.warn('syncAutoprintStatus error', e);
   }
 }
 

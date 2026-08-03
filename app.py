@@ -807,6 +807,18 @@ def index():
     return resp
 
 
+@app.route('/internal/show', methods=['POST'])
+def internal_show():
+    """Solo accesible en 127.0.0.1: le pide a ESTA instancia que muestre su
+    ventana. Lo usa un segundo intento de abrir el .exe para no duplicar la
+    app — en vez de arrancar un proceso nuevo, hace que el que ya está
+    corriendo (monitoreando o no) se muestre, igual que tocar el ícono de
+    la bandeja."""
+    if _webview_window:
+        _webview_window.show()
+    return jsonify({'ok': True})
+
+
 # ── Printer config ─────────────────────────────────────────────────────────────
 
 @app.route('/config', methods=['GET'])
@@ -2344,8 +2356,29 @@ def _run_tray():
     _tray_icon.run()
 
 
+def _try_focus_existing_instance(port=5050):
+    """Si ya hay una instancia de EnvioBot corriendo (monitoreando o no), le
+    pide que muestre su ventana y devuelve True — el proceso que llama a
+    esto tiene que terminar sin arrancar nada más. Evita el problema de abrir
+    el .exe de nuevo mientras ya está corriendo minimizado: en vez de matar
+    la instancia vieja (cortando el monitoreo) y abrir una segunda, se
+    reusa la que ya está."""
+    if not http:
+        return False
+    try:
+        r = http.get(f'http://127.0.0.1:{port}/config', timeout=1.5)
+        if r.status_code != 200:
+            return False
+        http.post(f'http://127.0.0.1:{port}/internal/show', timeout=1.5)
+        print("  EnvioBot ya está corriendo — mostrando la ventana existente.")
+        return True
+    except Exception:
+        return False
+
+
 def _kill_existing_on_port(port=5050):
-    """Mata cualquier proceso que ya esté escuchando en el puerto (Windows)."""
+    """Mata cualquier proceso que ya esté escuchando en el puerto pero no
+    responde como EnvioBot (zombie) — red de seguridad, no el camino normal."""
     import subprocess
     try:
         result = subprocess.run(
@@ -2382,6 +2415,10 @@ def _restore_poll_state():
 
 def start():
     global _webview_window
+
+    if _try_focus_existing_instance(5050):
+        return  # ya hay una instancia corriendo, no arrancar una segunda
+
     _kill_existing_on_port(5050)
     _restore_poll_state()
     threading.Thread(target=run_flask, daemon=True).start()

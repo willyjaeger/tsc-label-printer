@@ -346,7 +346,7 @@ footer { text-align:center; font-size:.7rem; color:var(--text2); margin-top:20px
   </div>
   <div>
     <h1>EnvioBot</h1>
-    <div class="sub">Impresión automática de pedidos &nbsp;·&nbsp; MercadoLibre &nbsp;·&nbsp; TiendaNube</div>
+    <div class="sub">Impresión automática de pedidos &nbsp;·&nbsp; MercadoLibre</div>
   </div>
   <div style="margin-left:auto;display:flex;align-items:center;gap:8px">
     <span id="sseBadge" class="lic-badge lic-err" style="display:none">⚠ Sin conexión en vivo</span>
@@ -373,7 +373,9 @@ footer { text-align:center; font-size:.7rem; color:var(--text2); margin-top:20px
   <button class="tab-btn active" data-tab="orders" onclick="switchTab('orders')">
     <svg width="16" height="16" viewBox="0 0 32 32" style="vertical-align:-3px;margin-right:5px;border-radius:4px"><rect width="32" height="32" rx="7" fill="#FFE600"/><text x="16" y="23" font-family="Arial Black,Arial,sans-serif" font-size="15" font-weight="900" text-anchor="middle" fill="#1A3661">ML</text></svg>MercadoLibre
   </button>
-  <button class="tab-btn" data-tab="tn" onclick="switchTab('tn')">
+  <!-- TiendaNube oculto por ahora (a pedido, foco inicial solo en MercadoLibre).
+       El código de backend/frontend sigue intacto — reactivar sacando este display:none. -->
+  <button class="tab-btn" data-tab="tn" onclick="switchTab('tn')" style="display:none">
     <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px"><path d="M18 10h-1.26A8 8 0 109 20h9a5 5 0 000-10z"/></svg>TiendaNube
   </button>
 </div>

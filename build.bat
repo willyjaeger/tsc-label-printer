@@ -1,8 +1,8 @@
 @echo off
-title Compilando TSC Label Printer...
+title Compilando EnvioBot...
 echo.
 echo  ================================================
-echo   TSC Label Printer - Build
+echo   EnvioBot - Build
 echo  ================================================
 echo.
 
@@ -24,9 +24,9 @@ if errorlevel 1 (
 )
 
 echo  [2/3] Limpiando build anterior...
-if exist "dist\TSC-Label-Printer.exe" del /f /q "dist\TSC-Label-Printer.exe"
+if exist "dist\EnvioBot.exe" del /f /q "dist\EnvioBot.exe"
 if exist "build" rmdir /s /q "build"
-if exist "TSC-Label-Printer.spec" del /f /q "TSC-Label-Printer.spec"
+if exist "EnvioBot.spec" del /f /q "EnvioBot.spec"
 
 echo  [3/3] Compilando...
 python -m PyInstaller ^
@@ -44,7 +44,7 @@ python -m PyInstaller ^
     --collect-all=fitz ^
     --collect-all=PIL ^
     --collect-all=pystray ^
-    --name "TSC-Label-Printer" ^
+    --name "EnvioBot" ^
     app.py
 
 if errorlevel 1 (
@@ -57,7 +57,7 @@ if errorlevel 1 (
 echo.
 echo  ================================================
 echo   Listo!
-echo   dist\TSC-Label-Printer.exe
+echo   dist\EnvioBot.exe
 echo.
 echo   Ese unico archivo se puede copiar a cualquier
 echo   PC con Windows, no necesita Python instalado.

@@ -12,6 +12,9 @@ orders.json
 # Claude Code settings locales
 .claude/settings.local.json
 
+# Backend: config con credenciales reales (no subir al repo)
+backend/config.php
+
 # Python cache
 __pycache__/
 *.pyc

@@ -52,6 +52,13 @@ ML_TOKEN_URL = 'https://api.mercadolibre.com/oauth/token'
 ML_API       = 'https://api.mercadolibre.com'
 REDIRECT_URI = 'https://willyjaeger.github.io/tsc-label-printer/callback.html'
 
+# ── Licencias ──────────────────────────────────────────────────────────────────
+_LICENSE_SERVER = 'https://logax.com.ar/enviobot'
+_LICENSE_SECRET = 'eb_9k4m2p7n1q8r5t3vw6x'
+_OWNER_KEY      = 'VJ2S-PJLG-MFLY-AXSD'
+_LIC_CACHE_TTL  = 3600        # re-validar cada 1 hora
+_LIC_GRACE_H    = 48          # horas offline permitidas antes de bloquear
+
 # PKCE: almacena {state: code_verifier} durante el flujo OAuth (en memoria, vida corta)
 _pkce_store = {}
 
@@ -60,7 +67,7 @@ TN_API_BASE     = 'https://api.tiendanube.com/v1'
 TN_TOKEN_URL    = 'https://www.tiendanube.com/apps/authorize/token'
 TN_CIRRUS       = 'https://cirrus.tiendanube.com/nuvem-envio/dispatches'
 TN_REDIRECT_URI = 'https://willyjaeger.github.io/tsc-label-printer/tn-callback.html'
-TN_USER_AGENT   = 'TSC-Label-Printer/1.0 (guillermo.jaeger@gmail.com)'
+TN_USER_AGENT   = 'EnvioBot/1.0 (guillermo.jaeger@gmail.com)'
 
 _tn_state_store = {}   # state → True, para CSRF
 
@@ -106,6 +113,123 @@ def load_config():
 def save_config(cfg):
     with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
         json.dump(cfg, f, indent=2)
+
+
+# ── Licencias ──────────────────────────────────────────────────────────────────
+
+def _machine_fingerprint():
+    """SHA256 de MAC + número de serie del volumen C:. Identifica la PC de forma única."""
+    import ctypes, uuid
+    mac = ':'.join(f'{(uuid.getnode() >> i) & 0xff:02x}' for i in range(0, 48, 8))
+    serial = 0
+    try:
+        vol_serial = ctypes.c_ulong()
+        ctypes.windll.kernel32.GetVolumeInformationW(
+            'C:\\', None, 0, ctypes.byref(vol_serial), None, None, None, 0)
+        serial = vol_serial.value
+    except Exception:
+        pass
+    return hashlib.sha256(f'{mac}|{serial}'.encode()).hexdigest()
+
+
+def _license_validate(force=False):
+    """
+    Valida la licencia contra el servidor.
+    Devuelve (valid: bool, reason: str, lic_type: str).
+    Usa caché de 1 hora. Grace period de 48 h si el servidor no responde.
+    """
+    cfg = load_config()
+    key = cfg.get('license_key', '').strip().upper()
+    if not key:
+        return False, 'no_key', ''
+
+    now = time.time()
+
+    # Usar caché si es reciente y no se fuerza re-validación
+    if not force:
+        last_check = cfg.get('_lic_checked_at', 0)
+        if (now - last_check) < _LIC_CACHE_TTL:
+            return (cfg.get('_lic_valid', False),
+                    cfg.get('_lic_reason', ''),
+                    cfg.get('_lic_type', ''))
+
+    fp = _machine_fingerprint()
+    try:
+        r = http.post(
+            f'{_LICENSE_SERVER}/validate.php',
+            json={'secret': _LICENSE_SECRET, 'key': key, 'fingerprint': fp},
+            timeout=6,
+        )
+        data = r.json()
+        valid  = bool(data.get('valid', False))
+        reason = '' if valid else data.get('reason', 'invalid')
+        ltype  = data.get('type', '')
+
+        cfg['_lic_valid']      = valid
+        cfg['_lic_reason']     = reason
+        cfg['_lic_type']       = ltype
+        cfg['_lic_checked_at'] = now
+        if valid:
+            cfg['_lic_last_ok'] = now
+        save_config(cfg)
+        return valid, reason, ltype
+
+    except Exception:
+        # Sin conexión: aplicar grace period
+        last_ok   = cfg.get('_lic_last_ok', 0)
+        hours_off = (now - last_ok) / 3600 if last_ok else 9999
+        ltype     = cfg.get('_lic_type', '')
+
+        if last_ok and hours_off < _LIC_GRACE_H:
+            return True, 'offline_grace', ltype
+        return False, 'server_unreachable', ''
+
+
+def _license_activate(key):
+    """
+    Activa una license key en esta máquina (primera vez).
+    Devuelve (ok: bool, reason: str, lic_type: str).
+    """
+    fp = _machine_fingerprint()
+    try:
+        r = http.post(
+            f'{_LICENSE_SERVER}/activate.php',
+            json={'secret': _LICENSE_SECRET, 'key': key.strip().upper(), 'fingerprint': fp},
+            timeout=10,
+        )
+        data   = r.json()
+        ok     = bool(data.get('ok', False))
+        reason = data.get('reason', '') if not ok else ''
+        ltype  = data.get('type', '')
+        if ok:
+            cfg = load_config()
+            cfg['license_key']     = key.strip().upper()
+            cfg['_lic_valid']      = True
+            cfg['_lic_reason']     = ''
+            cfg['_lic_type']       = ltype
+            cfg['_lic_checked_at'] = time.time()
+            cfg['_lic_last_ok']    = time.time()
+            save_config(cfg)
+        return ok, reason, ltype
+    except Exception as e:
+        return False, 'server_unreachable', ''
+
+
+def _require_license():
+    """Llama desde un endpoint de impresión. Devuelve None si ok, o jsonify de error."""
+    valid, reason, ltype = _license_validate()
+    if valid:
+        return None
+    messages = {
+        'no_key':            'Ingresá tu licencia en Configuración para imprimir.',
+        'expired':           'Tu suscripción EnvioBot venció. Contactá al vendedor para renovar.',
+        'revoked':           'Esta licencia fue desactivada. Contactá al vendedor.',
+        'wrong_machine':     'Esta licencia está activada en otra PC.',
+        'not_found':         'Licencia no encontrada. Verificá la clave.',
+        'server_unreachable':'Sin conexión al servidor de licencias (más de 48 h offline).',
+    }
+    msg = messages.get(reason, f'Licencia inválida ({reason}).')
+    return jsonify({'ok': False, 'error': msg, 'license_error': True}), 403
 
 
 # ── Orders persistence ─────────────────────────────────────────────────────────
@@ -635,10 +759,46 @@ def post_config():
         return jsonify({'ok': False, 'error': str(e)}), 500
 
 
+# ── Endpoints de licencia ──────────────────────────────────────────────────────
+
+@app.route('/license/status')
+def license_status():
+    cfg   = load_config()
+    key   = cfg.get('license_key', '').strip()
+    valid, reason, ltype = _license_validate()
+    return jsonify({
+        'key':    key[:4] + '-****-****-' + key[-4:] if len(key) == 19 else '',
+        'valid':  valid,
+        'reason': reason,
+        'type':   ltype,
+    })
+
+
+@app.route('/license/activate', methods=['POST'])
+def license_activate():
+    data = request.get_json(silent=True) or {}
+    key  = data.get('key', '').strip()
+    if not key:
+        return jsonify({'ok': False, 'error': 'Ingresá una clave de licencia.'}), 400
+    ok, reason, ltype = _license_activate(key)
+    if ok:
+        return jsonify({'ok': True, 'type': ltype})
+    messages = {
+        'not_found':     'Clave no encontrada. Verificá que esté bien escrita.',
+        'revoked':       'Esta licencia fue desactivada.',
+        'expired':       'Esta licencia está vencida.',
+        'wrong_machine': 'Esta licencia ya está activada en otra PC. Contactá al vendedor.',
+        'server_unreachable': 'No se pudo conectar al servidor. Verificá tu internet.',
+    }
+    return jsonify({'ok': False, 'error': messages.get(reason, f'Error: {reason}')}), 400
+
+
 # ── Print (archivo manual) ─────────────────────────────────────────────────────
 
 @app.route('/print', methods=['POST'])
 def print_label():
+    err = _require_license()
+    if err: return err
     cfg = load_config()
     raw = request.get_data()
     if not raw:
@@ -1522,6 +1682,8 @@ def ml_combo_debug(shipment_id):
 
 @app.route('/ml/print/<int:shipment_id>', methods=['POST'])
 def ml_print(shipment_id):
+    err = _require_license()
+    if err: return err
     token = get_valid_token()
     if not token:
         return jsonify({'ok': False, 'need_login': True}), 401
@@ -1598,6 +1760,8 @@ def ml_print(shipment_id):
 @app.route('/ml/print-all', methods=['POST'])
 def ml_print_all():
     """Imprime etiqueta + detalle por cada pedido, en pares consecutivos."""
+    err = _require_license()
+    if err: return err
     token = get_valid_token()
     if not token:
         return jsonify({'ok': False, 'need_login': True}), 401
@@ -1803,6 +1967,8 @@ def tn_orders():
 @app.route('/tn/print/<int:order_id>', methods=['POST'])
 def tn_print(order_id):
     """Obtiene fulfillment order, genera despacho en cirrus, convierte PDF a ZPL e imprime."""
+    err = _require_license()
+    if err: return err
     token = _tn_get_valid_token()
     if not token:
         return jsonify({'ok': False, 'need_login': True}), 401
@@ -1847,6 +2013,8 @@ def tn_print(order_id):
 @app.route('/tn/print-all', methods=['POST'])
 def tn_print_all():
     """Imprime etiquetas Andreani de todos los pedidos TN indicados."""
+    err = _require_license()
+    if err: return err
     token = _tn_get_valid_token()
     if not token:
         return jsonify({'ok': False, 'need_login': True}), 401
@@ -2049,9 +2217,9 @@ def _run_tray():
     )
 
     _tray_icon = pystray.Icon(
-        name    = 'impresor-etiquetas',
+        name    = 'enviobot',
         icon    = _make_tray_image(),
-        title   = 'Impresor de Etiquetas',
+        title   = 'EnvioBot',
         menu    = menu,
     )
     _tray_icon.run()
@@ -2093,7 +2261,7 @@ def start():
         _run_tray()
     else:
         print("=" * 50)
-        print("  Impresor de Etiquetas — http://localhost:5050")
+        print("  EnvioBot — http://localhost:5050")
         print("  Ctrl+C para cerrar")
         print("=" * 50)
         try:

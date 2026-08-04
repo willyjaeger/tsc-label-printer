@@ -952,6 +952,16 @@ function setCalStatus(type, msg) {
   document.getElementById('calStatusText').textContent = msg;
 }
 
+// Sanitiza texto que viene de afuera (nombre de comprador, dirección, título
+// de artículo, mensajes de error) antes de meterlo en innerHTML — si ese
+// texto contuviera HTML/JS en vez de ser texto normal, esto evita que el
+// navegador lo interprete como código en vez de mostrarlo tal cual.
+function escapeHtml(s) {
+  return String(s ?? '').replace(/[&<>"']/g, c => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+  }[c]));
+}
+
 function toast(msg, type = 'ok') {
   const colors = { ok: '#4caf88', err: '#e05555', warn: '#f5a623' };
   const t = document.createElement('div');
@@ -1109,7 +1119,7 @@ function renderEnCaminoArea(content) {
     const date = o.printed_at ? new Date(o.printed_at).toLocaleString('es-AR',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}) : '';
     const chk  = o.status_checked_at ? new Date(o.status_checked_at).toLocaleString('es-AR',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}) : 'sin verificar';
     const items = (o.items || []).map(i =>
-      `<div class="ec-item"><span>×${i.qty}</span>${i.title}</div>`
+      `<div class="ec-item"><span>×${i.qty}</span>${escapeHtml(i.title)}</div>`
     ).join('');
     content += `
       <div class="ec-card ${si.card}">
@@ -1118,8 +1128,8 @@ function renderEnCaminoArea(content) {
           <span class="badge ${si.cls}">${si.label}</span>
           <button class="btn-s btn-sm" style="margin-left:auto" onclick="reprintFromLocal(${o.shipment_id}, this)">↺</button>
         </div>
-        <div class="ec-buyer">${o.buyer || '—'}</div>
-        ${o.address ? `<div class="ec-addr">📍 ${o.address}</div>` : ''}
+        <div class="ec-buyer">${escapeHtml(o.buyer || '—')}</div>
+        ${o.address ? `<div class="ec-addr">📍 ${escapeHtml(o.address)}</div>` : ''}
         <div class="ec-items">${items}</div>
         <div class="ec-foot">
           <span class="ec-date">Impreso: ${date}</span>
@@ -1357,7 +1367,7 @@ function renderOrdersArea(loading = false, errorMsg = null) {
   }
 
   if (errorMsg) {
-    content += `<div class="card empty-state"><div class="empty-icon">⚠️</div><div class="empty-title">Error al cargar pedidos</div><div class="empty-sub">${errorMsg}</div></div>`;
+    content += `<div class="card empty-state"><div class="empty-icon">⚠️</div><div class="empty-title">Error al cargar pedidos</div><div class="empty-sub">${escapeHtml(errorMsg)}</div></div>`;
     area.innerHTML = content;
     return;
   }
@@ -1426,12 +1436,12 @@ function renderOrdersArea(loading = false, errorMsg = null) {
     <div class="orders-list" id="ordersList">`;
 
   function orderCardHtml(order, typeClass, typeBadgeClass, typeBadgeLabel) {
-    const buyer   = order._shipment?.receiver_name || order.buyer?.nickname || '—';
+    const buyer   = escapeHtml(order._shipment?.receiver_name || order.buyer?.nickname || '—');
     const items   = order.order_items ?? [];
     const shipId  = order.shipping?.id;
     const dateStr = order.date_closed ? timeAgo(order.date_closed) : '';
     const addr    = order._shipment
-        ? [order._shipment.street, order._shipment.city, order._shipment.state].filter(Boolean).join(', ')
+        ? escapeHtml([order._shipment.street, order._shipment.city, order._shipment.state].filter(Boolean).join(', '))
         : '';
     const printed  = shipId && isPrinted(shipId);
     const btnClass = printed ? 'btn-p' : 'btn-ok';
@@ -1439,7 +1449,7 @@ function renderOrdersArea(loading = false, errorMsg = null) {
     const cardCls  = ['order-card', typeClass, printed ? 'printed' : ''].filter(Boolean).join(' ');
 
     const itemsHtml = items.map(i =>
-      `<div class="order-item-row"><span class="order-qty">×${i.quantity}</span><span>${i.item?.title ?? '—'}</span></div>`
+      `<div class="order-item-row"><span class="order-qty">×${i.quantity}</span><span>${escapeHtml(i.item?.title ?? '—')}</span></div>`
     ).join('');
 
     const chkd = shipId && selectedShipIds.has(String(shipId));
@@ -1664,7 +1674,7 @@ function renderAutoprintBar() {
   } else if (apStatus === 'running') {
     dotCls = 'run'; statusTxt = 'Verificando…';
   } else if (apStatus === 'error') {
-    dotCls = 'err'; statusTxt = 'Error: ' + (apError || '?');
+    dotCls = 'err'; statusTxt = 'Error: ' + escapeHtml(apError || '?');
   } else {
     dotCls = 'on';
     statusTxt = apCheckedAt ? checkedAgoStr() : 'Activo';
@@ -1743,7 +1753,7 @@ function renderCancelAlerts() {
       <span class="cancel-alert-icon">🚫</span>
       <div class="cancel-alert-body">
         <div class="cancel-alert-title">Cancelado — NO despachar: Pedido #${a.orderId}</div>
-        <div class="cancel-alert-sub">${a.buyer ? `Comprador: ${a.buyer} · ` : ''}Envío: ${a.shipmentId || '—'} · Ya no aparece en MercadoLibre</div>
+        <div class="cancel-alert-sub">${a.buyer ? `Comprador: ${escapeHtml(a.buyer)} · ` : ''}Envío: ${escapeHtml(a.shipmentId || '—')} · Ya no aparece en MercadoLibre</div>
       </div>
       <button class="cancel-alert-close" onclick="dismissCancelAlert('${a.orderId}')">✓ Entendido</button>
     </div>`).join('');
@@ -1774,7 +1784,7 @@ function renderPrintErrorAlerts() {
       <span class="cancel-alert-icon">🖨️</span>
       <div class="cancel-alert-body">
         <div class="cancel-alert-title">No se pudo imprimir${a.orderId ? ` el pedido #${a.orderId}` : ''}</div>
-        <div class="cancel-alert-sub">${a.buyer ? `Comprador: ${a.buyer} · ` : ''}Envío: ${a.shipmentId || '—'} · ${a.error || 'Error desconocido'} · imprimilo a mano desde Despachar</div>
+        <div class="cancel-alert-sub">${a.buyer ? `Comprador: ${escapeHtml(a.buyer)} · ` : ''}Envío: ${escapeHtml(a.shipmentId || '—')} · ${escapeHtml(a.error || 'Error desconocido')} · imprimilo a mano desde Despachar</div>
       </div>
       <button class="cancel-alert-close" onclick="dismissPrintErrorAlert('${key}')">✓ Entendido</button>
     </div>`).join('');
@@ -1942,7 +1952,7 @@ function renderTNArea(loading = false, errorMsg = null) {
   }
 
   if (errorMsg) {
-    content += `<div class="card empty-state"><div class="empty-icon">⚠️</div><div class="empty-title">Error al cargar pedidos</div><div class="empty-sub">${errorMsg}</div></div>`;
+    content += `<div class="card empty-state"><div class="empty-icon">⚠️</div><div class="empty-title">Error al cargar pedidos</div><div class="empty-sub">${escapeHtml(errorMsg)}</div></div>`;
     area.innerHTML = content;
     return;
   }
@@ -1974,15 +1984,15 @@ function renderTNArea(loading = false, errorMsg = null) {
     const printed  = tnIsPrinted(order.id);
     const btnClass = printed ? 'btn-p' : 'btn-ok';
     const btnLabel = printed ? '↺ Reimprimir' : '🖨️ Imprimir';
-    const buyer    = order.contact_name || order.contact_email || '—';
+    const buyer    = escapeHtml(order.contact_name || order.contact_email || '—');
     const items    = order.products || [];
     const addr     = order.shipping_address;
-    const addrStr  = addr ? [addr.address, addr.number, addr.city, addr.province].filter(Boolean).join(', ') : '';
+    const addrStr  = addr ? escapeHtml([addr.address, addr.number, addr.city, addr.province].filter(Boolean).join(', ')) : '';
     const dateStr  = order.created_at ? timeAgo(order.created_at) : '';
     const cardCls  = ['order-card', 'tn-type', printed ? 'printed' : ''].filter(Boolean).join(' ');
 
     const itemsHtml = items.map(i =>
-      `<div class="order-item-row"><span class="order-qty">×${i.quantity}</span><span>${i.name || '—'}</span></div>`
+      `<div class="order-item-row"><span class="order-qty">×${i.quantity}</span><span>${escapeHtml(i.name || '—')}</span></div>`
     ).join('');
 
     content += `

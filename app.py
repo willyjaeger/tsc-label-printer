@@ -50,6 +50,7 @@ DEFAULT_CONFIG = {
     'port': 9100,
     'connection_type': 'network',   # 'network' (TCP a IP:puerto) | 'usb' (impresora instalada en Windows)
     'windows_printer_name': '',     # nombre exacto tal como figura en Windows, solo si connection_type == 'usb'
+    'label_language': 'zpl',        # 'zpl' (default, sin cambios) | 'tspl' (TSC nativo/Xprinter/Godex, camino aparte)
     'label_height_mm': 150,
     'label_width_mm': 100,
     'backfeed_dots': 0,
@@ -760,16 +761,7 @@ def _poll_worker():
                         buyer_name = (o.get('_shipment') or {}).get('receiver_name') \
                                      or (o.get('buyer') or {}).get('nickname', '')
                         try:
-                            r = http.get(
-                                f'{ML_API}/shipment_labels',
-                                params={'shipment_ids': sid, 'response_type': 'zpl2'},
-                                headers={'Authorization': f'Bearer {token}'},
-                                timeout=20,
-                            )
-                            zpl, err = _extract_zpl(
-                                r.content, r.status_code, r.text,
-                                r.headers.get('content-type', ''),
-                            )
+                            zpl, is_zpl, err = _fetch_ml_label(sid, token, cfg)
                             if err:
                                 logger.warning('auto-print: shipment %s (%s) — %s', sid, buyer_name, err)
                                 _push_event('print_error', {
@@ -793,7 +785,7 @@ def _poll_worker():
                             }
                             corr = next_correlative()
                             order_data['correlative'] = corr
-                            payload, _ = _print_ml_order(zpl, order_data, cfg)
+                            payload, _ = _print_ml_order(zpl, is_zpl, order_data, cfg)
                             print_raw(cfg, payload)
                             _save_printed_order(order_data)
                             _push_event('auto_printed', {
@@ -1395,23 +1387,80 @@ def _extract_zpl(content, status_code, response_text, content_type):
     return content, None
 
 
+def _extract_pdf(content, status_code, response_text, content_type):
+    """Igual que _extract_zpl pero para response_type=pdf (modo TSPL) — el
+    PDF puede venir directo o dentro de un ZIP. NOTA: la forma exacta de esta
+    respuesta no se pudo confirmar contra la API real de ML (no había ningún
+    pedido pendiente disponible al momento de escribir esto), así que se
+    maneja de la forma más flexible posible en vez de asumir un único formato."""
+    if status_code != 200:
+        return None, f'ML devolvió {status_code}: {response_text[:300]}'
+    if 'html' in content_type.lower():
+        return None, 'ML devolvió una página HTML. El envío puede no tener etiqueta disponible aún o el token expiró.'
+    if not content:
+        return None, 'ML devolvió contenido vacío.'
+
+    if content[:2] == b'PK':  # ZIP
+        try:
+            with zipfile.ZipFile(io.BytesIO(content)) as zf:
+                names = zf.namelist()
+                if not names:
+                    return None, 'El ZIP de ML está vacío.'
+                pdf_names = [n for n in names if n.lower().endswith('.pdf')]
+                target = pdf_names[0] if pdf_names else names[0]
+                return zf.read(target), None
+        except zipfile.BadZipFile as e:
+            return None, f'ML devolvió un ZIP inválido: {e}'
+
+    if content[:4] == b'%PDF':
+        return content, None
+
+    preview = content[:120].decode('utf-8', errors='replace')
+    return None, f'ML no devolvió un PDF válido. Respuesta: {preview}'
+
+
+def _fetch_ml_label(sid, token, cfg):
+    """Pide la etiqueta de un envío a ML — ZPL2 (default) o PDF si
+    label_language es 'tspl'. Punto único que decide qué formato pedir,
+    para no repetir esta rama en cada lugar que imprime.
+    Devuelve (payload_bytes, is_zpl, error_msg)."""
+    want_tspl = cfg.get('label_language') == 'tspl'
+    r = http.get(
+        f'{ML_API}/shipment_labels',
+        params={'shipment_ids': sid, 'response_type': 'pdf' if want_tspl else 'zpl2'},
+        headers={'Authorization': f'Bearer {token}'},
+        timeout=20,
+    )
+    if want_tspl:
+        payload, err = _extract_pdf(r.content, r.status_code, r.text, r.headers.get('content-type', ''))
+        return payload, False, err
+    payload, err = _extract_zpl(r.content, r.status_code, r.text, r.headers.get('content-type', ''))
+    return payload, True, err
+
+
 def count_labels(data: bytes) -> int:
     """Cuenta etiquetas en un bloque ZPL contando ocurrencias de ^XA."""
     import re as _re
     return max(1, len(_re.findall(rb'\^XA', data, _re.IGNORECASE)))
 
 
-def pdf_to_zpl(pdf_bytes: bytes, width_mm: float = 100.0,
-               height_mm: float = 150.0, dpi: int = 203) -> bytes:
-    """Convierte la primera página de un PDF a ZPL ^GFA listo para imprimir.
-    Requiere pymupdf (fitz) y Pillow."""
+def _pdf_page_to_bitmap(pdf_bytes: bytes, width_mm: float = 100.0,
+                         height_mm: float = 150.0, dpi: int = 203,
+                         overlay_text: str = None):
+    """Renderiza la primera página de un PDF a un bitmap 1bpp (1=imprimir,
+    0=blanco), empaquetado MSB-first — el mismo formato de datos crudos que
+    usan tanto ^GFA (ZPL) como BITMAP (TSPL), solo cambia el "envoltorio" de
+    comando alrededor. Lógica de renderizado idéntica a la que ya usaba
+    pdf_to_zpl (sin cambios de comportamiento para ese camino).
+    Si se pasa overlay_text, se dibuja en la esquina inferior-derecha (mismo
+    lugar donde _inject_correlative_into_zpl pone el correlativo en ZPL).
+    Devuelve (bitmap_bytes, target_w, target_h, bytes_per_row)."""
     try:
         import fitz  # pymupdf
     except ImportError:
         raise RuntimeError('pymupdf no instalado. Ejecutar: pip install pymupdf')
     try:
         from PIL import Image
-        import io as _io
     except ImportError:
         raise RuntimeError('Pillow no instalado. Ejecutar: pip install Pillow')
 
@@ -1427,7 +1476,6 @@ def pdf_to_zpl(pdf_bytes: bytes, width_mm: float = 100.0,
         raise RuntimeError('El PDF está vacío (0 páginas)')
 
     page = doc[0]
-    rect = page.rect  # en puntos (1 pt = 1/72 inch)
 
     # Renderizar con alta resolución y luego reescalar
     render_scale = max(dpi, 300) / 72.0
@@ -1442,6 +1490,21 @@ def pdf_to_zpl(pdf_bytes: bytes, width_mm: float = 100.0,
     img    = img.resize((new_w, new_h), Image.LANCZOS)
     canvas = Image.new('L', (target_w, target_h), 255)
     canvas.paste(img, ((target_w - new_w) // 2, (target_h - new_h) // 2))
+
+    if overlay_text:
+        from PIL import ImageDraw, ImageFont
+        draw = ImageDraw.Draw(canvas)
+        try:
+            font = ImageFont.truetype('arial.ttf', size=max(16, int(target_h * 0.045)))
+        except Exception:
+            font = ImageFont.load_default()
+        bbox = draw.textbbox((0, 0), overlay_text, font=font)
+        tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
+        pad = 10
+        x = target_w - tw - pad - 6
+        y = target_h - th - pad - 6
+        draw.rectangle([x - 6, y - 4, x + tw + 6, y + th + 8], fill=255)
+        draw.text((x, y), overlay_text, fill=0, font=font)
 
     bytes_per_row = (target_w + 7) // 8
     total_bytes   = bytes_per_row * target_h
@@ -1466,7 +1529,7 @@ def pdf_to_zpl(pdf_bytes: bytes, width_mm: float = 100.0,
             dith = Image.NONE  # Pillow < 9.1
         img1 = canvas.convert('1', dither=dith)
         raw  = img1.tobytes()
-        # PIL '1': bit 0 = negro, bit 1 = blanco → ZPL: bit 1 = imprimir → invertir
+        # PIL '1': bit 0 = negro, bit 1 = blanco → destino: bit 1 = imprimir → invertir
         if len(raw) == total_bytes:
             bitmap = bytes(b ^ 0xFF for b in raw)
         else:
@@ -1480,10 +1543,46 @@ def pdf_to_zpl(pdf_bytes: bytes, width_mm: float = 100.0,
                         bmp[rb + x // 8] |= (0x80 >> (x % 8))
             bitmap = bytes(bmp)
 
+    return bitmap, target_w, target_h, bytes_per_row
+
+
+def pdf_to_zpl(pdf_bytes: bytes, width_mm: float = 100.0,
+               height_mm: float = 150.0, dpi: int = 203) -> bytes:
+    """Convierte la primera página de un PDF a ZPL ^GFA listo para imprimir.
+    Requiere pymupdf (fitz) y Pillow."""
+    bitmap, target_w, target_h, bytes_per_row = _pdf_page_to_bitmap(
+        pdf_bytes, width_mm, height_mm, dpi)
+    total_bytes = bytes_per_row * target_h
     hex_data = bitmap.hex().upper()
     return (f'^XA\r\n^PW{target_w}\r\n^LL{target_h}\r\n^FO0,0\r\n'
             f'^GFA,{total_bytes},{total_bytes},{bytes_per_row},{hex_data}\r\n'
             f'^XZ\r\n').encode('ascii')
+
+
+def pdf_to_tspl(pdf_bytes: bytes, width_mm: float = 100.0,
+                 height_mm: float = 150.0, dpi: int = 203,
+                 overlay_text: str = None) -> bytes:
+    """Convierte la primera página de un PDF a TSPL (comando BITMAP) —
+    equivalente a pdf_to_zpl pero para impresoras que hablan TSPL nativo
+    (TSC, Xprinter, Godex) en vez de ZPL. Mismo renderizado, distinto
+    'envoltorio' de comando. Requiere pymupdf (fitz) y Pillow.
+    NOTA: sin validar todavía contra una impresora TSPL real."""
+    bitmap, target_w, target_h, bytes_per_row = _pdf_page_to_bitmap(
+        pdf_bytes, width_mm, height_mm, dpi, overlay_text=overlay_text)
+    header = b'CLS\r\n'
+    cmd    = f'BITMAP 0,0,{bytes_per_row},{target_h},0,'.encode('ascii')
+    footer = b'\r\nPRINT 1,1\r\n'
+    return header + cmd + bitmap + footer
+
+
+def _pdf_to_label(pdf_bytes, cfg, width_mm=100.0, height_mm=150.0):
+    """Convierte un PDF a la etiqueta lista para imprimir en el idioma
+    configurado — ZPL (default) o TSPL si label_language == 'tspl'. Usado
+    hoy por TiendaNube/Andreani, que ya trabaja con PDF."""
+    dpi = int(cfg.get('dpi', 203))
+    if cfg.get('label_language') == 'tspl':
+        return pdf_to_tspl(pdf_bytes, width_mm=width_mm, height_mm=height_mm, dpi=dpi)
+    return pdf_to_zpl(pdf_bytes, width_mm=width_mm, height_mm=height_mm, dpi=dpi)
 
 
 def _ascii_zpl(text):
@@ -1596,6 +1695,86 @@ def _build_detail_zpl(order_data, cfg):
     return ('\r\n'.join(lines) + '\r\n').encode('latin-1', errors='replace')
 
 
+def _build_detail_tspl(order_data, cfg):
+    """Equivalente en TSPL de _build_detail_zpl: mismo contenido (correlativo,
+    código de barras, comprador, artículos con salto de línea manual), pero
+    con comandos TSPL (TEXT/BARCODE/BAR) en vez de ZPL. Las fuentes de TSPL
+    no son 1:1 con las de ZPL — los tamaños son una aproximación funcional,
+    no una réplica pixel a pixel. NOTA: sin validar todavía contra una
+    impresora TSPL real, puede necesitar ajuste de tamaños de fuente."""
+    dpi = int(cfg.get('dpi', 203))
+    dpm = dpi / 25.4
+    w   = round(float(cfg.get('label_width_mm',  100)) * dpm)
+    h   = round(float(cfg.get('label_height_mm', 150)) * dpm)
+
+    def q(text):
+        # TSPL delimita strings con comillas dobles — evitar romper el comando
+        return str(text).replace('"', "'").replace('\\', '/')
+
+    buyer       = q(order_data.get('buyer', ''))[:38]
+    order_id    = str(order_data.get('order_id', ''))
+    shipment_id = str(order_data.get('shipment_id', ''))
+    correlative = order_data.get('correlative')
+    items       = order_data.get('items', [])
+
+    m = 25
+    y = 12
+    lines = ['CLS']
+
+    def txt(mult, content, indent=0):
+        nonlocal y
+        lines.append(f'TEXT {m + indent},{y},"3",0,{mult},{mult},"{q(content)[:60]}"')
+        y += 20 * mult + 14
+
+    def hsep(thick=2):
+        nonlocal y
+        lines.append(f'BAR {m},{y},{w - m * 2},{thick}')
+        y += thick + 7
+
+    # ── Correlativo grande ───────────────────────────────────────────────────
+    if correlative is not None:
+        lines.append(f'TEXT {m},{y},"3",0,3,3,"#{correlative:03d}"')
+        y += 116
+
+    # ── Código de barras del envío ───────────────────────────────────────────
+    if shipment_id:
+        lines.append(f'BARCODE {m},{y},"128",90,1,0,2,4,"{q(shipment_id)}"')
+        y += 124
+
+    # ── Datos del pedido ─────────────────────────────────────────────────────
+    hsep()
+    if order_id:
+        txt(1, f'Pedido # {order_id}')
+    if buyer:
+        txt(1, buyer)
+    hsep()
+
+    # ── Artículos: salto de línea manual (TSPL no tiene bloque con wrap) ─────
+    fld_w   = w - m - 22 - m
+    char_w  = 13  # ancho aprox. por caracter con fuente "3" x1
+    cpl     = max(10, fld_w // char_w)
+    first   = True
+    for item in items:
+        if y > h - 80:
+            lines.append(f'TEXT {m},{y},"3",0,1,1,"... y mas articulos"')
+            break
+        if not first:
+            hsep(1)
+        first = False
+        qty   = item.get('qty', 1)
+        title = q(item.get('title', ''))
+        label = f'{qty}  {title}'
+        wrapped = [label[i:i + cpl] for i in range(0, len(label), cpl)][:6] or ['']
+        lines.append(f'BAR {m},{y + 6},14,14')
+        for i, wline in enumerate(wrapped):
+            lines.append(f'TEXT {m + 22},{y},"3",0,1,1,"{wline}"')
+            y += 32
+        y += 12
+
+    lines.append('PRINT 1,1')
+    return ('\r\n'.join(lines) + '\r\n').encode('latin-1', errors='replace')
+
+
 def _build_combo_zpl(order_data, ml_zpl_bytes, cfg):
     """
     Etiqueta combo 100×190 mm con troquel:
@@ -1681,20 +1860,34 @@ def _build_combo_zpl(order_data, ml_zpl_bytes, cfg):
     return ('\r\n'.join(parts) + '\r\n').encode('latin-1', errors='replace')
 
 
-def _print_ml_order(zpl_bytes, order_data, cfg):
+def _print_ml_order(payload_in, is_zpl, order_data, cfg):
     """
     Imprime una orden ML según el tipo de etiqueta configurado.
-    Devuelve (payload_bytes, labels_count).
+    `payload_in` es ZPL nativo de ML si is_zpl=True, o un PDF si is_zpl=False
+    (modo TSPL — ver label_language). Devuelve (payload_bytes, labels_count).
+
+    El layout "combo" (troquel 100×190) es específico de ZPL — en modo TSPL
+    siempre se usa el layout estándar de 2 etiquetas (envío + detalle),
+    independientemente de ml_label_type.
     """
-    label_type = cfg.get('ml_label_type', 'standard')
     corr = order_data.get('correlative') or next_correlative()
     order_data['correlative'] = corr
 
+    if not is_zpl:
+        dpi  = int(cfg.get('dpi', 203))
+        w_mm = float(cfg.get('label_width_mm',  100))
+        h_mm = float(cfg.get('label_height_mm', 150))
+        ship_tspl = pdf_to_tspl(payload_in, width_mm=w_mm, height_mm=h_mm,
+                                 dpi=dpi, overlay_text=f'#{corr:03d}')
+        payload = ship_tspl + _build_detail_tspl(order_data, cfg)
+        return payload, 2
+
+    label_type = cfg.get('ml_label_type', 'standard')
     if label_type == 'combo':
-        payload = _build_combo_zpl(order_data, zpl_bytes, cfg)
+        payload = _build_combo_zpl(order_data, payload_in, cfg)
         return payload, 1
     else:
-        payload = (_inject_correlative_into_zpl(zpl_bytes, corr)
+        payload = (_inject_correlative_into_zpl(payload_in, corr)
                    + _build_detail_zpl(order_data, cfg))
         return payload, 2
 
@@ -1859,13 +2052,7 @@ def ml_print(shipment_id):
     cfg        = load_config()
     order_data = request.get_json(silent=True) or {}
     try:
-        r = http.get(
-            f'{ML_API}/shipment_labels',
-            params={'shipment_ids': shipment_id, 'response_type': 'zpl2'},
-            headers={'Authorization': f'Bearer {token}'},
-            timeout=20,
-        )
-        zpl, err = _extract_zpl(r.content, r.status_code, r.text, r.headers.get('content-type', ''))
+        zpl, is_zpl, err = _fetch_ml_label(shipment_id, token, cfg)
         if err:
             return jsonify({'ok': False, 'error': err}), 502
 
@@ -1911,10 +2098,15 @@ def ml_print(shipment_id):
             corr = next_correlative()
             order_data['shipment_id'] = str(shipment_id)
             order_data['correlative'] = corr
-            payload, n_labels = _print_ml_order(zpl, order_data, cfg)
-        else:
+            payload, n_labels = _print_ml_order(zpl, is_zpl, order_data, cfg)
+        elif is_zpl:
             payload  = zpl
             n_labels = count_labels(payload)
+        else:
+            payload  = pdf_to_tspl(zpl, width_mm=float(cfg.get('label_width_mm', 100)),
+                                    height_mm=float(cfg.get('label_height_mm', 150)),
+                                    dpi=int(cfg.get('dpi', 203)))
+            n_labels = 1
         print_raw(cfg, payload)
         _save_printed_order(order_data)
         return jsonify({'ok': True, 'labels': n_labels,
@@ -1948,13 +2140,7 @@ def ml_print_all():
         if not sid:
             continue
         try:
-            r = http.get(
-                f'{ML_API}/shipment_labels',
-                params={'shipment_ids': sid, 'response_type': 'zpl2'},
-                headers={'Authorization': f'Bearer {token}'},
-                timeout=20,
-            )
-            zpl, err = _extract_zpl(r.content, r.status_code, r.text, r.headers.get('content-type', ''))
+            zpl, is_zpl, err = _fetch_ml_label(sid, token, cfg)
             if err:
                 failed.append(str(sid))
                 continue
@@ -1962,10 +2148,14 @@ def ml_print_all():
             if order.get('items'):
                 corr = next_correlative()
                 order['correlative'] = corr
-                chunk, _ = _print_ml_order(zpl, order, cfg)
+                chunk, _ = _print_ml_order(zpl, is_zpl, order, cfg)
                 combined += chunk
-            else:
+            elif is_zpl:
                 combined += zpl
+            else:
+                combined += pdf_to_tspl(zpl, width_mm=float(cfg.get('label_width_mm', 100)),
+                                         height_mm=float(cfg.get('label_height_mm', 150)),
+                                         dpi=int(cfg.get('dpi', 203)))
             _save_printed_order(order)
         except Exception:
             failed.append(str(sid))
@@ -2161,14 +2351,9 @@ def tn_print(order_id):
         # 2. Obtener PDF de Andreani
         pdf_bytes = _tn_get_label_pdf(fo['id'], cfg)
 
-        # 3. Convertir PDF → ZPL
+        # 3. Convertir PDF → etiqueta (ZPL o TSPL según configuración)
         # Andreani labels are always 100×150mm regardless of ML combo config
-        zpl = pdf_to_zpl(
-            pdf_bytes,
-            width_mm=100.0,
-            height_mm=150.0,
-            dpi=int(cfg.get('dpi', 203)),
-        )
+        zpl = _pdf_to_label(pdf_bytes, cfg, width_mm=100.0, height_mm=150.0)
 
         # 4. Imprimir
         print_raw(cfg, zpl)
@@ -2210,12 +2395,7 @@ def tn_print_all():
                 failed.append(str(oid))
                 continue
             pdf_bytes = _tn_get_label_pdf(fo['id'], cfg)
-            zpl = pdf_to_zpl(
-                pdf_bytes,
-                width_mm=100.0,
-                height_mm=150.0,
-                dpi=int(cfg.get('dpi', 203)),
-            )
+            zpl = _pdf_to_label(pdf_bytes, cfg, width_mm=100.0, height_mm=150.0)
             combined += zpl
             printed  += 1
         except Exception as e:

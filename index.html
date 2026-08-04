@@ -390,6 +390,19 @@ footer { text-align:center; font-size:.7rem; color:var(--text2); margin-top:20px
   <div class="hint" id="usbHint" style="display:none;margin-top:8px">
     La calibración automática no está disponible por USB — usá los botones físicos de la impresora.
   </div>
+
+  <div class="row" style="margin-top:10px">
+    <div class="f1">
+      <label>Idioma de etiqueta</label>
+      <select id="labelLanguage" onchange="onLabelLanguageChange()">
+        <option value="zpl">ZPL (Zebra / TSC compatible — el de siempre)</option>
+        <option value="tspl">TSPL (TSC nativo, Xprinter, Godex — experimental)</option>
+      </select>
+    </div>
+  </div>
+  <div class="hint" id="tsplWarnHint" style="display:none;margin-top:8px;color:var(--warn)">
+    ⚠️ Experimental — todavía no se probó contra una impresora TSPL real. No lo actives si tu impresora ya imprime bien en ZPL.
+  </div>
 </div>
 
 <!-- Tabs -->
@@ -665,6 +678,9 @@ async function init() {
     document.getElementById('usbFields').style.display     = connType === 'usb' ? '' : 'none';
     document.getElementById('usbHint').style.display        = connType === 'usb' ? '' : 'none';
     if (connType === 'usb') await refreshUsbPrinters(c.windows_printer_name);
+    const labelLang = c.label_language ?? 'zpl';
+    document.getElementById('labelLanguage').value = labelLang;
+    document.getElementById('tsplWarnHint').style.display = labelLang === 'tspl' ? '' : 'none';
     document.getElementById('mlClientId').value      = c.ml_client_id     ?? '';
     document.getElementById('mlClientSecret').value  = c.ml_client_secret ?? '';
     document.getElementById('tnClientId').value      = c.tn_client_id     ?? '';
@@ -726,6 +742,7 @@ async function saveConfig() {
       ip:                    document.getElementById('printerIp').value.trim(),
       port:                  parseInt(document.getElementById('printerPort').value) || 9100,
       windows_printer_name:  document.getElementById('usbPrinterSelect').value,
+      label_language:        document.getElementById('labelLanguage').value,
     })
   });
   flashPill(connType === 'usb' ? 'savedPillUsb' : 'savedPill');
@@ -737,6 +754,12 @@ function onConnTypeChange() {
   document.getElementById('usbFields').style.display     = usb ? '' : 'none';
   document.getElementById('usbHint').style.display        = usb ? '' : 'none';
   if (usb && !document.getElementById('usbPrinterSelect').dataset.loaded) refreshUsbPrinters();
+  saveConfig();
+}
+
+function onLabelLanguageChange() {
+  const tspl = document.getElementById('labelLanguage').value === 'tspl';
+  document.getElementById('tsplWarnHint').style.display = tspl ? '' : 'none';
   saveConfig();
 }
 

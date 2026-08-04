@@ -351,59 +351,9 @@ footer { text-align:center; font-size:.7rem; color:var(--text2); margin-top:20px
   <div style="margin-left:auto;display:flex;align-items:center;gap:8px">
     <span id="sseBadge" class="lic-badge lic-err" style="display:none">⚠ Sin conexión en vivo</span>
     <span id="licenseBadge" class="lic-badge" style="opacity:.4">Verificando…</span>
+    <button class="btn-s btn-sm" onclick="switchTab('config')" title="Configuración" style="padding:6px 10px">⚙️</button>
   </div>
 </header>
-
-<!-- Impresora config (siempre visible) -->
-<div class="card">
-  <div style="display:flex;gap:16px;margin-bottom:10px">
-    <label class="ap-chk-label" style="gap:6px;font-size:.85rem">
-      <input type="radio" name="connType" value="network" id="connTypeNetwork" onchange="onConnTypeChange()">
-      <span>Red (IP)</span>
-    </label>
-    <label class="ap-chk-label" style="gap:6px;font-size:.85rem">
-      <input type="radio" name="connType" value="usb" id="connTypeUsb" onchange="onConnTypeChange()">
-      <span>USB / instalada en Windows</span>
-    </label>
-  </div>
-
-  <div class="row" id="networkFields">
-    <div class="f1"><label>IP de la impresora</label><input type="text" id="printerIp" placeholder="192.168.1.100"></div>
-    <div class="fp"><label>Puerto</label><input type="number" id="printerPort" value="9100"></div>
-    <div><label>&nbsp;</label>
-      <button class="btn-s btn-sm" onclick="saveConfig()">Guardar<span class="saved-pill" id="savedPill">✓</span></button>
-    </div>
-  </div>
-
-  <div class="row" id="usbFields" style="display:none">
-    <div class="f1">
-      <label>Impresora instalada en Windows</label>
-      <select id="usbPrinterSelect"><option value="">— elegir —</option></select>
-    </div>
-    <div><label>&nbsp;</label>
-      <button class="btn-s btn-sm" onclick="refreshUsbPrinters()" title="Actualizar lista de impresoras">↻</button>
-    </div>
-    <div><label>&nbsp;</label>
-      <button class="btn-s btn-sm" onclick="saveConfig()">Guardar<span class="saved-pill" id="savedPillUsb">✓</span></button>
-    </div>
-  </div>
-  <div class="hint" id="usbHint" style="display:none;margin-top:8px">
-    La calibración automática no está disponible por USB — usá los botones físicos de la impresora.
-  </div>
-
-  <div class="row" style="margin-top:10px">
-    <div class="f1">
-      <label>Idioma de etiqueta</label>
-      <select id="labelLanguage" onchange="onLabelLanguageChange()">
-        <option value="zpl">ZPL (Zebra / TSC compatible — el de siempre)</option>
-        <option value="tspl">TSPL (TSC nativo, Xprinter, Godex — experimental)</option>
-      </select>
-    </div>
-  </div>
-  <div class="hint" id="tsplWarnHint" style="display:none;margin-top:8px;color:var(--warn)">
-    ⚠️ Experimental — todavía no se probó contra una impresora TSPL real. No lo actives si tu impresora ya imprime bien en ZPL.
-  </div>
-</div>
 
 <!-- Tabs -->
 <div class="tabs">
@@ -434,6 +384,97 @@ footer { text-align:center; font-size:.7rem; color:var(--text2); margin-top:20px
     </div>
     <div class="status-bar idle" id="printStatus">
       <div class="s-dot"></div><span id="printStatusText">Listo para imprimir</span>
+    </div>
+  </div>
+
+</div><!-- /tab-print -->
+
+
+<!-- ══════════════ TAB: PEDIDOS ML ══════════════ -->
+<div id="tab-orders" class="tab-content active">
+
+  <!-- Barra de auto-impresión (visible solo cuando conectado) -->
+  <div id="autoprintBar" style="display:none"></div>
+
+  <!-- Alertas de posible cancelación -->
+  <div id="cancelAlertsArea"></div>
+
+  <!-- Alertas de auto-impresión fallida -->
+  <div id="printErrorAlertsArea"></div>
+
+  <!-- Estado de login / contenido de orders -->
+  <div id="ordersArea">
+    <!-- Se renderiza por JS -->
+  </div>
+
+</div><!-- /tab-orders -->
+
+
+<!-- ══════════════ TAB: TIENDANUBE ══════════════ -->
+<div id="tab-tn" class="tab-content">
+
+  <!-- Estado de login / contenido de pedidos TN -->
+  <div id="tnArea">
+    <!-- Se renderiza por JS -->
+  </div>
+
+</div><!-- /tab-tn -->
+
+
+<!-- ══════════════ TAB: CONFIGURACIÓN (sin botón en .tabs, se llega por el engranaje del header) ══════════════ -->
+<div id="tab-config" class="tab-content">
+
+  <button class="btn-s btn-sm" onclick="switchTab(_lastMainTab)" style="margin-bottom:14px">← Volver</button>
+
+  <!-- Impresora -->
+  <div class="card">
+    <div style="font-size:.71rem;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--text2);margin-bottom:10px">Impresora</div>
+    <div style="display:flex;gap:16px;margin-bottom:10px">
+      <label class="ap-chk-label" style="gap:6px;font-size:.85rem">
+        <input type="radio" name="connType" value="network" id="connTypeNetwork" onchange="onConnTypeChange()">
+        <span>Red (IP)</span>
+      </label>
+      <label class="ap-chk-label" style="gap:6px;font-size:.85rem">
+        <input type="radio" name="connType" value="usb" id="connTypeUsb" onchange="onConnTypeChange()">
+        <span>USB / instalada en Windows</span>
+      </label>
+    </div>
+
+    <div class="row" id="networkFields">
+      <div class="f1"><label>IP de la impresora</label><input type="text" id="printerIp" placeholder="192.168.1.100"></div>
+      <div class="fp"><label>Puerto</label><input type="number" id="printerPort" value="9100"></div>
+      <div><label>&nbsp;</label>
+        <button class="btn-s btn-sm" onclick="saveConfig()">Guardar<span class="saved-pill" id="savedPill">✓</span></button>
+      </div>
+    </div>
+
+    <div class="row" id="usbFields" style="display:none">
+      <div class="f1">
+        <label>Impresora instalada en Windows</label>
+        <select id="usbPrinterSelect"><option value="">— elegir —</option></select>
+      </div>
+      <div><label>&nbsp;</label>
+        <button class="btn-s btn-sm" onclick="refreshUsbPrinters()" title="Actualizar lista de impresoras">↻</button>
+      </div>
+      <div><label>&nbsp;</label>
+        <button class="btn-s btn-sm" onclick="saveConfig()">Guardar<span class="saved-pill" id="savedPillUsb">✓</span></button>
+      </div>
+    </div>
+    <div class="hint" id="usbHint" style="display:none;margin-top:8px">
+      La calibración automática no está disponible por USB — usá los botones físicos de la impresora.
+    </div>
+
+    <div class="row" style="margin-top:10px">
+      <div class="f1">
+        <label>Idioma de etiqueta</label>
+        <select id="labelLanguage" onchange="onLabelLanguageChange()">
+          <option value="zpl">ZPL (Zebra / TSC compatible)</option>
+          <option value="tspl">TSPL (TSC nativo, Xprinter, Godex)</option>
+        </select>
+      </div>
+    </div>
+    <div class="hint" id="tsplWarnHint" style="display:none;margin-top:8px;color:var(--warn)">
+      ⚠️ Experimental — todavía no se probó contra una impresora TSPL real. No lo actives si tu impresora ya imprime bien en ZPL.
     </div>
   </div>
 
@@ -527,12 +568,6 @@ footer { text-align:center; font-size:.7rem; color:var(--text2); margin-top:20px
     </div>
   </div>
 
-</div><!-- /tab-print -->
-
-
-<!-- ══════════════ TAB: PEDIDOS ML ══════════════ -->
-<div id="tab-orders" class="tab-content active">
-
   <!-- Credenciales ML (colapsable) -->
   <div class="card">
     <button class="col-toggle" onclick="toggleCol('credBody','credArrow')">
@@ -554,27 +589,7 @@ footer { text-align:center; font-size:.7rem; color:var(--text2); margin-top:20px
     </div>
   </div>
 
-  <!-- Barra de auto-impresión (visible solo cuando conectado) -->
-  <div id="autoprintBar" style="display:none"></div>
-
-  <!-- Alertas de posible cancelación -->
-  <div id="cancelAlertsArea"></div>
-
-  <!-- Alertas de auto-impresión fallida -->
-  <div id="printErrorAlertsArea"></div>
-
-  <!-- Estado de login / contenido de orders -->
-  <div id="ordersArea">
-    <!-- Se renderiza por JS -->
-  </div>
-
-</div><!-- /tab-orders -->
-
-
-<!-- ══════════════ TAB: TIENDANUBE ══════════════ -->
-<div id="tab-tn" class="tab-content">
-
-  <!-- Credenciales TN (colapsable) -->
+  <!-- Credenciales TiendaNube (colapsable) -->
   <div class="card">
     <button class="col-toggle" onclick="toggleCol('tnCredBody','tnCredArrow')">
       <span>Credenciales de la app TiendaNube</span><span class="col-arrow" id="tnCredArrow">▾</span>
@@ -595,12 +610,16 @@ footer { text-align:center; font-size:.7rem; color:var(--text2); margin-top:20px
     </div>
   </div>
 
-  <!-- Estado de login / contenido de pedidos TN -->
-  <div id="tnArea">
-    <!-- Se renderiza por JS -->
+  <!-- Licencia -->
+  <div class="card" style="padding:12px 14px">
+    <div style="font-size:.71rem;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--text2);margin-bottom:10px">Licencia</div>
+    <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+      <span id="licenseBadgeConfig" class="lic-badge" style="opacity:.4">Verificando…</span>
+      <button class="btn-s btn-sm" onclick="showLicenseModal()">Cambiar licencia</button>
+    </div>
   </div>
 
-</div><!-- /tab-tn -->
+</div><!-- /tab-config -->
 
 
 <footer>Impresor Automático de Etiquetas · ZPL over TCP 9100 · local</footer>
@@ -714,7 +733,13 @@ async function init() {
 }
 
 // ── Tabs ──────────────────────────────────────────────
+// Configuración no tiene botón propio en .tabs (se llega por el engranaje) —
+// se guarda cuál era la pestaña de trabajo activa para que "← Volver" sepa
+// a dónde regresar.
+let _lastMainTab = 'orders';
+
 function switchTab(tab) {
+  if (tab !== 'config') _lastMainTab = tab;
   document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
   document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
   const tabEl  = document.getElementById('tab-' + tab);
@@ -2053,24 +2078,27 @@ async function checkLicenseStatus() {
 }
 
 function updateLicenseBadge(d) {
-  const badge = document.getElementById('licenseBadge');
-  if (!badge) return;
-  if (d.valid) {
-    const labels = { OWNER: 'Licencia propia', PAID: 'Licencia activa', DEMO: 'Licencia demo' };
-    badge.textContent = labels[d.type] || 'Licencia activa';
-    badge.className = 'lic-badge lic-ok';
-  } else {
-    const labels = {
-      no_key:            'Sin licencia',
-      expired:           'Licencia vencida',
-      revoked:           'Licencia revocada',
-      wrong_machine:     'Máquina no autorizada',
-      server_unreachable:'Servidor sin conexión',
-    };
-    badge.textContent = labels[d.reason] || 'Licencia inválida';
-    badge.className = 'lic-badge lic-err';
-    badge.onclick = () => showLicenseModal(d.reason);
-  }
+  // Header y pantalla de Configuración muestran el mismo estado en paralelo.
+  ['licenseBadge', 'licenseBadgeConfig'].forEach(id => {
+    const badge = document.getElementById(id);
+    if (!badge) return;
+    if (d.valid) {
+      const labels = { OWNER: 'Licencia propia', PAID: 'Licencia activa', DEMO: 'Licencia demo' };
+      badge.textContent = labels[d.type] || 'Licencia activa';
+      badge.className = 'lic-badge lic-ok';
+    } else {
+      const labels = {
+        no_key:            'Sin licencia',
+        expired:           'Licencia vencida',
+        revoked:           'Licencia revocada',
+        wrong_machine:     'Máquina no autorizada',
+        server_unreachable:'Servidor sin conexión',
+      };
+      badge.textContent = labels[d.reason] || 'Licencia inválida';
+      badge.className = 'lic-badge lic-err';
+      badge.onclick = () => showLicenseModal(d.reason);
+    }
+  });
 }
 
 function showLicenseModal(reason) {

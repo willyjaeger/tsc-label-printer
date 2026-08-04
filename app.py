@@ -1085,12 +1085,17 @@ def _query_size(ip, port):
 
 @app.route('/printer/hs')
 def printer_hs():
-    """Diagnóstico: muestra respuesta cruda de ~HS. Requiere red — por USB no
-    hay forma confiable de leer la respuesta de vuelta desde el spooler."""
+    """Diagnóstico: muestra respuesta cruda de ~HS. Requiere red Y ZPL — por
+    USB no hay forma confiable de leer la respuesta de vuelta desde el
+    spooler, y ~HS es un comando de la familia ZPL que no se probó (ni hay
+    garantía de que funcione) con una impresora en modo TSPL."""
     cfg = load_config()
     if cfg.get('connection_type') == 'usb':
         return jsonify({'ok': False, 'error':
             'No disponible con impresora USB — esta lectura necesita conexión de red.'})
+    if cfg.get('label_language') == 'tspl':
+        return jsonify({'ok': False, 'error':
+            'No disponible en modo TSPL — ~HS es un comando ZPL, no se probó contra impresoras TSPL.'})
     try:
         ip, port = cfg.get('ip', ''), int(cfg.get('port', 9100))
         hs_raw = query_printer(ip, port, '~HS', read_bytes=512, timeout=4)
@@ -1114,6 +1119,9 @@ def autocal():
     if cfg.get('connection_type') == 'usb':
         return jsonify({'ok': False, 'error':
             'No disponible con impresora USB — calibrá con los botones físicos de la impresora.'}), 400
+    if cfg.get('label_language') == 'tspl':
+        return jsonify({'ok': False, 'error':
+            'No disponible en modo TSPL — ~JC/~HS son comandos ZPL, no se probaron contra impresoras TSPL. Calibrá con los botones físicos de la impresora.'}), 400
     try:
         dpi         = int(cfg.get('dpi', 203))
         height_mm   = float(cfg.get('label_height_mm', 150))

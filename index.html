@@ -470,7 +470,7 @@ footer { text-align:center; font-size:.7rem; color:var(--text2); margin-top:20px
       <div class="s-dot"></div><span id="printerTestStatusText">—</span>
     </div>
     <div class="hint" id="usbHint" style="display:none;margin-top:8px">
-      La calibración automática no está disponible por USB — usá los botones físicos de la impresora.
+      La calibración automática no está disponible por USB ni en modo TSPL — usá los botones físicos de la impresora.
     </div>
 
     <div class="row" style="margin-top:10px">
@@ -726,11 +726,11 @@ async function init() {
     document.getElementById('connTypeUsb').checked     = connType === 'usb';
     document.getElementById('networkFields').style.display = connType === 'usb' ? 'none' : '';
     document.getElementById('usbFields').style.display     = connType === 'usb' ? '' : 'none';
-    document.getElementById('usbHint').style.display        = connType === 'usb' ? '' : 'none';
     if (connType === 'usb') await refreshUsbPrinters(c.windows_printer_name);
     const labelLang = c.label_language ?? 'zpl';
     document.getElementById('labelLanguage').value = labelLang;
     document.getElementById('tsplWarnHint').style.display = labelLang === 'tspl' ? '' : 'none';
+    updateCalHint();
     document.getElementById('mlClientId').value      = c.ml_client_id     ?? '';
     document.getElementById('mlClientSecret').value  = c.ml_client_secret ?? '';
     document.getElementById('tnClientId').value      = c.tn_client_id     ?? '';
@@ -804,11 +804,20 @@ async function saveConfig() {
   flashPill(connType === 'usb' ? 'savedPillUsb' : 'savedPill');
 }
 
+// Calibración automática (~JC/~HS) es TCP + ZPL — no disponible por USB
+// (no hay forma confiable de leer la respuesta del spooler) NI en modo TSPL
+// (son comandos de la familia ZPL, nunca probados contra una impresora TSPL).
+function updateCalHint() {
+  const usb  = document.querySelector('input[name="connType"]:checked')?.value === 'usb';
+  const tspl = document.getElementById('labelLanguage').value === 'tspl';
+  document.getElementById('usbHint').style.display = (usb || tspl) ? '' : 'none';
+}
+
 function onConnTypeChange() {
   const usb = document.querySelector('input[name="connType"]:checked')?.value === 'usb';
   document.getElementById('networkFields').style.display = usb ? 'none' : '';
   document.getElementById('usbFields').style.display     = usb ? '' : 'none';
-  document.getElementById('usbHint').style.display        = usb ? '' : 'none';
+  updateCalHint();
   if (usb && !document.getElementById('usbPrinterSelect').dataset.loaded) refreshUsbPrinters();
   saveConfig();
 }
@@ -816,6 +825,7 @@ function onConnTypeChange() {
 function onLabelLanguageChange() {
   const tspl = document.getElementById('labelLanguage').value === 'tspl';
   document.getElementById('tsplWarnHint').style.display = tspl ? '' : 'none';
+  updateCalHint();
   saveConfig();
 }
 

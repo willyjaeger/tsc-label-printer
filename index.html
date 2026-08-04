@@ -444,6 +444,9 @@ footer { text-align:center; font-size:.7rem; color:var(--text2); margin-top:20px
       <div class="f1"><label>IP de la impresora</label><input type="text" id="printerIp" placeholder="192.168.1.100"></div>
       <div class="fp"><label>Puerto</label><input type="number" id="printerPort" value="9100"></div>
       <div><label>&nbsp;</label>
+        <button class="btn-s btn-sm" onclick="testPrinterConnection(this)">Probar conexión</button>
+      </div>
+      <div><label>&nbsp;</label>
         <button class="btn-s btn-sm" onclick="saveConfig()">Guardar<span class="saved-pill" id="savedPill">✓</span></button>
       </div>
     </div>
@@ -457,8 +460,14 @@ footer { text-align:center; font-size:.7rem; color:var(--text2); margin-top:20px
         <button class="btn-s btn-sm" onclick="refreshUsbPrinters()" title="Actualizar lista de impresoras">↻</button>
       </div>
       <div><label>&nbsp;</label>
+        <button class="btn-s btn-sm" onclick="testPrinterConnection(this)">Probar conexión</button>
+      </div>
+      <div><label>&nbsp;</label>
         <button class="btn-s btn-sm" onclick="saveConfig()">Guardar<span class="saved-pill" id="savedPillUsb">✓</span></button>
       </div>
+    </div>
+    <div class="status-bar idle" id="printerTestStatus" style="display:none;margin-top:10px">
+      <div class="s-dot"></div><span id="printerTestStatusText">—</span>
     </div>
     <div class="hint" id="usbHint" style="display:none;margin-top:8px">
       La calibración automática no está disponible por USB — usá los botones físicos de la impresora.
@@ -500,7 +509,7 @@ footer { text-align:center; font-size:.7rem; color:var(--text2); margin-top:20px
           <div class="row">
             <div class="f1"><label>Alto (mm)</label><input type="number" id="labelHeight" value="150" min="10" max="400" step="0.5"></div>
             <div class="f1"><label>Ancho (mm)</label><input type="number" id="labelWidth" value="100" min="10" max="200" step="0.5"></div>
-            <div class="f1"><label>Gap (mm)</label><input type="number" id="labelGap" value="3" min="0.5" max="30" step="0.5"></div>
+            <div class="f1"><label>Gap (mm)</label><input type="number" id="labelGap" value="10" min="0.5" max="30" step="0.5"></div>
             <div><label>&nbsp;</label><button class="btn-s btn-sm" onclick="applyCalibration(this)">Guardar ↵</button></div>
           </div>
           <div class="row" style="margin-top:8px">
@@ -583,7 +592,18 @@ footer { text-align:center; font-size:.7rem; color:var(--text2); margin-top:20px
           Guardar credenciales<span class="saved-pill" id="credPill">✓</span>
         </button>
         <div class="hint" style="margin-top:10px">
-          Crear la app en <strong>developers.mercadolibre.com.ar</strong> · Redirect URI: <code style="background:var(--surf3);padding:1px 5px;border-radius:3px;font-size:.78rem">http://localhost:5050/auth/callback</code>
+          <div style="font-weight:600;margin-bottom:6px">Cómo conseguir esto:</div>
+          <ol style="margin:0 0 8px 18px;padding:0;line-height:1.6">
+            <li>Entrá a <strong>developers.mercadolibre.com.ar</strong> con tu cuenta de vendedor.</li>
+            <li>Creá una aplicación nueva ("Crear aplicación").</li>
+            <li>En "Redirect URI" pegá exactamente esto:
+              <div style="display:flex;align-items:center;gap:6px;margin-top:4px">
+                <code style="background:var(--surf3);padding:1px 5px;border-radius:3px;font-size:.78rem">http://localhost:5050/auth/callback</code>
+                <button class="btn-s btn-sm" style="padding:2px 8px;font-size:.72rem" onclick="copyText('http://localhost:5050/auth/callback', this)">Copiar</button>
+              </div>
+            </li>
+            <li>Copiá el <strong>App ID</strong> y el <strong>Secret key</strong> que te muestra ML y pegalos arriba.</li>
+          </ol>
         </div>
       </div>
     </div>
@@ -604,7 +624,18 @@ footer { text-align:center; font-size:.7rem; color:var(--text2); margin-top:20px
           Guardar credenciales<span class="saved-pill" id="tnCredPill">✓</span>
         </button>
         <div class="hint" style="margin-top:10px">
-          Crear la app en <strong>partners.tiendanube.com</strong> · Redirect URI: <code style="background:var(--surf3);padding:1px 5px;border-radius:3px;font-size:.78rem">https://willyjaeger.github.io/tsc-label-printer/tn-callback.html</code>
+          <div style="font-weight:600;margin-bottom:6px">Cómo conseguir esto:</div>
+          <ol style="margin:0 0 8px 18px;padding:0;line-height:1.6">
+            <li>Entrá a <strong>partners.tiendanube.com</strong> con tu cuenta.</li>
+            <li>Creá una aplicación nueva.</li>
+            <li>En "Redirect URI" pegá exactamente esto:
+              <div style="display:flex;align-items:center;gap:6px;margin-top:4px">
+                <code style="background:var(--surf3);padding:1px 5px;border-radius:3px;font-size:.78rem">https://willyjaeger.github.io/tsc-label-printer/tn-callback.html</code>
+                <button class="btn-s btn-sm" style="padding:2px 8px;font-size:.72rem" onclick="copyText('https://willyjaeger.github.io/tsc-label-printer/tn-callback.html', this)">Copiar</button>
+              </div>
+            </li>
+            <li>Copiá el <strong>App ID</strong> y el <strong>Secret key</strong> que te muestra TiendaNube y pegalos arriba.</li>
+          </ol>
         </div>
       </div>
     </div>
@@ -706,7 +737,7 @@ async function init() {
     document.getElementById('tnClientSecret').value  = c.tn_client_secret ?? '';
     document.getElementById('labelHeight').value  = c.label_height_mm ?? 150;
     document.getElementById('labelWidth').value   = c.label_width_mm  ?? 100;
-    document.getElementById('labelGap').value     = c.label_gap_mm    ?? 3;
+    document.getElementById('labelGap').value     = c.label_gap_mm    ?? 10;
     document.getElementById('dpi').value          = c.dpi             ?? 203;
     document.getElementById('mediaType').value    = c.media_type      ?? 'gap';
     document.getElementById('backfeedDots').value = c.backfeed_dots ?? 0;
@@ -804,6 +835,38 @@ async function refreshUsbPrinters(selectValue) {
   }
 }
 
+// Prueba de verdad la conexión (abre el socket / la impresora de Windows)
+// con los valores tal cual están en el formulario, se hayan guardado o no —
+// "Guardar" antes no validaba nada, solo mostraba éxito sin más.
+async function testPrinterConnection(btn) {
+  const connType = document.querySelector('input[name="connType"]:checked')?.value ?? 'network';
+  const bar  = document.getElementById('printerTestStatus');
+  const text = document.getElementById('printerTestStatusText');
+  bar.style.display = '';
+  bar.className = 'status-bar loading';
+  text.textContent = 'Probando…';
+  if (btn) btn.disabled = true;
+  try {
+    const r = await fetch(API + '/printer/test', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        connection_type:      connType,
+        ip:                   document.getElementById('printerIp').value.trim(),
+        port:                 parseInt(document.getElementById('printerPort').value) || 9100,
+        windows_printer_name: document.getElementById('usbPrinterSelect').value,
+      }),
+    });
+    const d = await r.json();
+    bar.className = 'status-bar ' + (d.ok ? 'ok' : 'err');
+    text.textContent = (d.ok ? '✓ ' : '✗ ') + (d.ok ? (d.detail || 'Responde correctamente.') : d.error);
+  } catch(e) {
+    bar.className = 'status-bar err';
+    text.textContent = '✗ Sin conexión con la app';
+  }
+  if (btn) btn.disabled = false;
+}
+
 async function saveMlLabelType() {
   const type = document.querySelector('input[name="mlLabelType"]:checked')?.value ?? 'standard';
   document.getElementById('dieCutConfig').style.display = type === 'combo' ? '' : 'none';
@@ -832,6 +895,19 @@ function flashPill(id) {
   const p = document.getElementById(id);
   p.classList.add('show');
   setTimeout(() => p.classList.remove('show'), 2000);
+}
+
+async function copyText(text, btn) {
+  try {
+    await navigator.clipboard.writeText(text);
+    if (btn) {
+      const orig = btn.textContent;
+      btn.textContent = '✓ Copiado';
+      setTimeout(() => btn.textContent = orig, 1500);
+    }
+  } catch(e) {
+    toast('✗ No se pudo copiar', 'err');
+  }
 }
 
 

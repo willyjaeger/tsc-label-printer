@@ -900,6 +900,47 @@ def printers_list():
         return jsonify({'ok': False, 'error': str(e)}), 500
 
 
+@app.route('/printer/test', methods=['POST'])
+def printer_test():
+    """Prueba de conectividad real, sin imprimir nada — para que 'Guardar' en
+    Configuración deje de ser un acto de fe. Usa los valores del formulario
+    tal como están (aunque todavía no se hayan guardado), con la config ya
+    guardada como respaldo si no vienen en el pedido."""
+    body = request.get_json(silent=True) or {}
+    cfg = load_config()
+    conn_type = body.get('connection_type') or cfg.get('connection_type', 'network')
+
+    if conn_type == 'usb':
+        name = body.get('windows_printer_name') or cfg.get('windows_printer_name', '')
+        if not name:
+            return jsonify({'ok': False, 'error': 'Elegí una impresora de la lista primero.'})
+        try:
+            import win32print
+            h = win32print.OpenPrinter(name)
+            win32print.ClosePrinter(h)
+            return jsonify({'ok': True, 'detail': f'"{name}" responde.'})
+        except Exception as e:
+            return jsonify({'ok': False, 'error': f'No se pudo abrir "{name}": {e}'})
+
+    ip   = (body.get('ip') or cfg.get('ip', '')).strip()
+    port = int(body.get('port') or cfg.get('port', 9100))
+    if not ip:
+        return jsonify({'ok': False, 'error': 'Ingresá una IP primero.'})
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s.settimeout(3)
+    try:
+        s.connect((ip, port))
+        return jsonify({'ok': True, 'detail': f'{ip}:{port} responde.'})
+    except socket.timeout:
+        return jsonify({'ok': False, 'error': f'{ip}:{port} no respondió (timeout) — ¿está prendida y en la misma red?'})
+    except ConnectionRefusedError:
+        return jsonify({'ok': False, 'error': f'{ip}:{port} rechazó la conexión — revisá el puerto.'})
+    except Exception as e:
+        return jsonify({'ok': False, 'error': f'{ip}:{port} — {e}'})
+    finally:
+        s.close()
+
+
 # ── Endpoints de licencia ──────────────────────────────────────────────────────
 
 @app.route('/license/status')
@@ -1099,7 +1140,7 @@ def autocal():
             gap_source = 'medido'
             cfg['label_gap_mm'] = gap_mm
         else:
-            gap_mm     = float(cfg.get('label_gap_mm', 3))
+            gap_mm     = float(cfg.get('label_gap_mm', 10))
             gap_source = 'config'
 
         if height_mm_read is not None:

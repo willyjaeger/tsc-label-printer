@@ -48,6 +48,8 @@ logger.addHandler(_log_handler)
 DEFAULT_CONFIG = {
     'ip': '192.168.1.100',
     'port': 9100,
+    'connection_type': 'network',   # 'network' (TCP a IP:puerto) | 'usb' (impresora instalada en Windows)
+    'windows_printer_name': '',     # nombre exacto tal como figura en Windows, solo si connection_type == 'usb'
     'label_height_mm': 150,
     'label_width_mm': 100,
     'backfeed_dots': 0,
@@ -376,6 +378,53 @@ def send_to_printer(ip, port, data, retries=2, retry_delay=0.6):
             s.close()
     logger.error('send_to_printer: sin éxito tras %d intentos — %s', retries + 1, last_err)
     raise last_err
+
+
+def send_to_printer_usb(printer_name, data, retries=1, retry_delay=0.6):
+    """Envía datos crudos (ZPL/TSPL) a una impresora instalada en Windows —
+    USB, LPT o de red ya agregada como impresora de Windows — usando el
+    spooler en modo RAW: el driver reenvía los bytes tal cual, sin
+    interpretarlos ni renderizarlos, igual que send_to_printer por TCP."""
+    import win32print
+    if isinstance(data, str):
+        data = data.encode('utf-8')
+    last_err = None
+    for attempt in range(retries + 1):
+        try:
+            hPrinter = win32print.OpenPrinter(printer_name)
+            try:
+                hJob = win32print.StartDocPrinter(hPrinter, 1, ('EnvioBot', None, 'RAW'))
+                try:
+                    win32print.StartPagePrinter(hPrinter)
+                    win32print.WritePrinter(hPrinter, data)
+                    win32print.EndPagePrinter(hPrinter)
+                finally:
+                    win32print.EndDocPrinter(hPrinter)
+            finally:
+                win32print.ClosePrinter(hPrinter)
+            return
+        except Exception as e:
+            last_err = e
+            if attempt < retries:
+                logger.warning('send_to_printer_usb: intento %d/%d falló (%s), reintentando…',
+                                attempt + 1, retries + 1, e)
+                time.sleep(retry_delay)
+    logger.error('send_to_printer_usb: sin éxito tras %d intentos — %s', retries + 1, last_err)
+    raise last_err
+
+
+def print_raw(cfg, data):
+    """Punto único de impresión: decide red (TCP a IP:puerto) o USB/impresora
+    instalada en Windows según connection_type. Todo el pipeline de impresión
+    (auto-print, manual, ML, TiendaNube) pasa siempre por acá — la rama de
+    red es exactamente send_to_printer de siempre, sin cambios."""
+    if cfg.get('connection_type') == 'usb':
+        name = cfg.get('windows_printer_name', '')
+        if not name:
+            raise RuntimeError('No hay impresora USB seleccionada en Configuración.')
+        send_to_printer_usb(name, data)
+    else:
+        send_to_printer(cfg['ip'], cfg['port'], data)
 
 
 def query_printer(ip, port, cmd, read_bytes=512, timeout=5, retries=1, retry_delay=0.5):
@@ -745,7 +794,7 @@ def _poll_worker():
                             corr = next_correlative()
                             order_data['correlative'] = corr
                             payload, _ = _print_ml_order(zpl, order_data, cfg)
-                            send_to_printer(cfg['ip'], cfg['port'], payload)
+                            print_raw(cfg, payload)
                             _save_printed_order(order_data)
                             _push_event('auto_printed', {
                                 'shipment_id': sid,
@@ -841,6 +890,24 @@ def post_config():
         return jsonify({'ok': False, 'error': str(e)}), 500
 
 
+@app.route('/printers/list')
+def printers_list():
+    """Impresoras instaladas en Windows (para elegir modo USB) — cualquiera
+    que Windows vea, sea por USB, LPT o red agregada como impresora local."""
+    try:
+        import win32print
+        printers = win32print.EnumPrinters(
+            win32print.PRINTER_ENUM_LOCAL | win32print.PRINTER_ENUM_CONNECTIONS)
+        names = sorted({p[2] for p in printers})
+        try:
+            default = win32print.GetDefaultPrinter()
+        except Exception:
+            default = None
+        return jsonify({'ok': True, 'printers': names, 'default': default})
+    except Exception as e:
+        return jsonify({'ok': False, 'error': str(e)}), 500
+
+
 # ── Endpoints de licencia ──────────────────────────────────────────────────────
 
 @app.route('/license/status')
@@ -899,7 +966,7 @@ def print_label():
 
     n_labels = count_labels(raw)
     try:
-        send_to_printer(cfg['ip'], cfg['port'], raw)
+        print_raw(cfg, raw)
         return jsonify({'ok': True, 'labels': n_labels})
     except socket.timeout:
         return jsonify({'ok': False, 'error': f"Timeout: no se pudo conectar a {cfg['ip']}:{cfg['port']}"}), 500
@@ -920,7 +987,7 @@ def set_lt():
     cfg['backfeed_dots'] = value
     save_config(cfg)
     try:
-        send_to_printer(cfg['ip'], cfg['port'], f'^XA^LT{value}^XZ')
+        print_raw(cfg, f'^XA^LT{value}^XZ')
         return jsonify({'ok': True, 'value': value})
     except Exception as e:
         return jsonify({'ok': False, 'error': str(e)}), 500
@@ -941,7 +1008,7 @@ def calibrate():
 
     zpl = f'^XA\r\n^MN{media_char}\r\n^LL{height_dots}\r\n^LT{backfeed_dots}\r\n^XZ\r\n'
     try:
-        send_to_printer(cfg['ip'], cfg['port'], zpl)
+        print_raw(cfg, zpl)
         return jsonify({'ok': True, 'zpl': zpl, 'dots': {'height': height_dots, 'backfeed': backfeed_dots}})
     except Exception as e:
         return jsonify({'ok': False, 'error': str(e)}), 500
@@ -985,9 +1052,13 @@ def _query_size(ip, port):
 
 @app.route('/printer/hs')
 def printer_hs():
-    """Diagnóstico: muestra respuesta cruda de ~HS."""
+    """Diagnóstico: muestra respuesta cruda de ~HS. Requiere red — por USB no
+    hay forma confiable de leer la respuesta de vuelta desde el spooler."""
+    cfg = load_config()
+    if cfg.get('connection_type') == 'usb':
+        return jsonify({'ok': False, 'error':
+            'No disponible con impresora USB — esta lectura necesita conexión de red.'})
     try:
-        cfg = load_config()
         ip, port = cfg.get('ip', ''), int(cfg.get('port', 9100))
         hs_raw = query_printer(ip, port, '~HS', read_bytes=512, timeout=4)
         dpi = int(cfg.get('dpi', 203))
@@ -1007,6 +1078,9 @@ def printer_hs():
 @app.route('/autocal', methods=['POST'])
 def autocal():
     cfg = load_config()
+    if cfg.get('connection_type') == 'usb':
+        return jsonify({'ok': False, 'error':
+            'No disponible con impresora USB — calibrá con los botones físicos de la impresora.'}), 400
     try:
         dpi         = int(cfg.get('dpi', 203))
         height_mm   = float(cfg.get('label_height_mm', 150))
@@ -1075,7 +1149,7 @@ def testprint():
            f'^FO{cx-150},{h//2+10}^ADN,20,10^FD{cfg["label_height_mm"]}mm x {cfg["label_width_mm"]}mm  {dpi}dpi^FS\r\n'
            f'^XZ\r\n')
     try:
-        send_to_printer(cfg['ip'], cfg['port'], zpl)
+        print_raw(cfg, zpl)
         return jsonify({'ok': True})
     except Exception as e:
         return jsonify({'ok': False, 'error': str(e)}), 500
@@ -1841,7 +1915,7 @@ def ml_print(shipment_id):
         else:
             payload  = zpl
             n_labels = count_labels(payload)
-        send_to_printer(cfg['ip'], cfg['port'], payload)
+        print_raw(cfg, payload)
         _save_printed_order(order_data)
         return jsonify({'ok': True, 'labels': n_labels,
                         'items_used': len(order_data.get('items', []))})
@@ -1901,7 +1975,7 @@ def ml_print_all():
 
     n_labels = count_labels(combined)
     try:
-        send_to_printer(cfg['ip'], cfg['port'], combined)
+        print_raw(cfg, combined)
         return jsonify({'ok': True, 'printed': len(orders) - len(failed),
                         'labels': n_labels, 'failed': failed})
     except socket.timeout:
@@ -2097,7 +2171,7 @@ def tn_print(order_id):
         )
 
         # 4. Imprimir
-        send_to_printer(cfg['ip'], cfg['port'], zpl)
+        print_raw(cfg, zpl)
         return jsonify({'ok': True, 'labels': 1, 'fulfillment_id': fo['id']})
 
     except socket.timeout:
@@ -2152,7 +2226,7 @@ def tn_print_all():
         return jsonify({'ok': False, 'error': 'No se pudo obtener ninguna etiqueta.'}), 502
 
     try:
-        send_to_printer(cfg['ip'], cfg['port'], combined)
+        print_raw(cfg, combined)
         return jsonify({'ok': True, 'printed': printed, 'labels': printed, 'failed': failed})
     except socket.timeout:
         return jsonify({'ok': False, 'error': f"Timeout de impresora: {cfg['ip']}:{cfg['port']}"}), 500

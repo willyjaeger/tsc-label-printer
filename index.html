@@ -356,12 +356,39 @@ footer { text-align:center; font-size:.7rem; color:var(--text2); margin-top:20px
 
 <!-- Impresora config (siempre visible) -->
 <div class="card">
-  <div class="row">
+  <div style="display:flex;gap:16px;margin-bottom:10px">
+    <label class="ap-chk-label" style="gap:6px;font-size:.85rem">
+      <input type="radio" name="connType" value="network" id="connTypeNetwork" onchange="onConnTypeChange()">
+      <span>Red (IP)</span>
+    </label>
+    <label class="ap-chk-label" style="gap:6px;font-size:.85rem">
+      <input type="radio" name="connType" value="usb" id="connTypeUsb" onchange="onConnTypeChange()">
+      <span>USB / instalada en Windows</span>
+    </label>
+  </div>
+
+  <div class="row" id="networkFields">
     <div class="f1"><label>IP de la impresora</label><input type="text" id="printerIp" placeholder="192.168.1.100"></div>
     <div class="fp"><label>Puerto</label><input type="number" id="printerPort" value="9100"></div>
     <div><label>&nbsp;</label>
       <button class="btn-s btn-sm" onclick="saveConfig()">Guardar<span class="saved-pill" id="savedPill">✓</span></button>
     </div>
+  </div>
+
+  <div class="row" id="usbFields" style="display:none">
+    <div class="f1">
+      <label>Impresora instalada en Windows</label>
+      <select id="usbPrinterSelect"><option value="">— elegir —</option></select>
+    </div>
+    <div><label>&nbsp;</label>
+      <button class="btn-s btn-sm" onclick="refreshUsbPrinters()" title="Actualizar lista de impresoras">↻</button>
+    </div>
+    <div><label>&nbsp;</label>
+      <button class="btn-s btn-sm" onclick="saveConfig()">Guardar<span class="saved-pill" id="savedPillUsb">✓</span></button>
+    </div>
+  </div>
+  <div class="hint" id="usbHint" style="display:none;margin-top:8px">
+    La calibración automática no está disponible por USB — usá los botones físicos de la impresora.
   </div>
 </div>
 
@@ -631,6 +658,13 @@ async function init() {
     const c = await r.json();
     document.getElementById('printerIp').value       = c.ip               ?? '192.168.1.100';
     document.getElementById('printerPort').value     = c.port             ?? 9100;
+    const connType = c.connection_type ?? 'network';
+    document.getElementById('connTypeNetwork').checked = connType === 'network';
+    document.getElementById('connTypeUsb').checked     = connType === 'usb';
+    document.getElementById('networkFields').style.display = connType === 'usb' ? 'none' : '';
+    document.getElementById('usbFields').style.display     = connType === 'usb' ? '' : 'none';
+    document.getElementById('usbHint').style.display        = connType === 'usb' ? '' : 'none';
+    if (connType === 'usb') await refreshUsbPrinters(c.windows_printer_name);
     document.getElementById('mlClientId').value      = c.ml_client_id     ?? '';
     document.getElementById('mlClientSecret').value  = c.ml_client_secret ?? '';
     document.getElementById('tnClientId').value      = c.tn_client_id     ?? '';
@@ -683,15 +717,43 @@ function toggleCol(bodyId, arrowId) {
 
 // ── Config ────────────────────────────────────────────
 async function saveConfig() {
+  const connType = document.querySelector('input[name="connType"]:checked')?.value ?? 'network';
   await fetch(API + '/config', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({
-      ip:   document.getElementById('printerIp').value.trim(),
-      port: parseInt(document.getElementById('printerPort').value) || 9100,
+      connection_type:       connType,
+      ip:                    document.getElementById('printerIp').value.trim(),
+      port:                  parseInt(document.getElementById('printerPort').value) || 9100,
+      windows_printer_name:  document.getElementById('usbPrinterSelect').value,
     })
   });
-  flashPill('savedPill');
+  flashPill(connType === 'usb' ? 'savedPillUsb' : 'savedPill');
+}
+
+function onConnTypeChange() {
+  const usb = document.querySelector('input[name="connType"]:checked')?.value === 'usb';
+  document.getElementById('networkFields').style.display = usb ? 'none' : '';
+  document.getElementById('usbFields').style.display     = usb ? '' : 'none';
+  document.getElementById('usbHint').style.display        = usb ? '' : 'none';
+  if (usb && !document.getElementById('usbPrinterSelect').dataset.loaded) refreshUsbPrinters();
+  saveConfig();
+}
+
+async function refreshUsbPrinters(selectValue) {
+  const sel = document.getElementById('usbPrinterSelect');
+  const current = selectValue ?? sel.value;
+  try {
+    const r = await fetch(API + '/printers/list');
+    const d = await r.json();
+    if (!d.ok) { toast('✗ No se pudo leer la lista de impresoras: ' + d.error, 'err'); return; }
+    sel.innerHTML = '<option value="">— elegir —</option>' +
+      d.printers.map(p => `<option value="${p}">${p}${p === d.default ? ' (predeterminada)' : ''}</option>`).join('');
+    if (current && d.printers.includes(current)) sel.value = current;
+    sel.dataset.loaded = '1';
+  } catch(e) {
+    toast('✗ No se pudo leer la lista de impresoras', 'err');
+  }
 }
 
 async function saveMlLabelType() {

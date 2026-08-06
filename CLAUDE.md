@@ -94,6 +94,25 @@ Cada pedido imprime **2 etiquetas consecutivas**:
 El correlativo (`#001`, `#002`...) se reinicia cada día a medianoche — se guarda en `config.json`
 como `_correlative` + `_correlative_date`.
 
+### Modo A4 (impresora normal, sin impresora térmica)
+Alternativa a todo el camino ZPL/TSPL de arriba, para vendedores sin impresora térmica —
+`output_mode: 'a4'` en vez de `'thermal'` (default). Cuando está activo:
+- `_fetch_ml_label`/TN piden siempre el label como **PDF** (`force_pdf=True`), nunca ZPL.
+- `label_image_for_a4()` renderiza ese PDF a una `PIL.Image` (reutiliza `_pdf_page_to_image`,
+  la misma capa que usa `pdf_to_zpl`/`pdf_to_tspl`, sin empaquetar a 1bpp).
+- `_build_detail_image()` dibuja el equivalente de `_build_detail_zpl`/`_build_detail_tspl`
+  (correlativo, comprador, artículos) con `PIL.ImageDraw` — el código de barras Code128 se genera
+  con la librería `python-barcode` (no hay comando de impresora que lo dibuje por su cuenta).
+- `_build_a4_page()` compone una hoja A4 a 300dpi (2480×3508px): etiqueta arriba, detalle abajo.
+  Para TiendaNube (`order_data=None`) no hay bloque de detalle — la etiqueta de Andreani ya trae
+  la dirección impresa por el correo, así que ocupa casi toda la hoja.
+- `print_a4_image()` imprime esa imagen vía `win32ui`/`PIL.ImageWin` (modo documento/GDI, no RAW) —
+  no pasa por `print_raw()`, que sigue siendo 100% ZPL/TSPL.
+- `a4_printer_name` (config) es la impresora Windows elegida para este modo — separada de
+  `windows_printer_name` (impresora térmica USB), así no se pisan entre sí al cambiar de modo.
+- Con `output_mode == 'a4'`, `/print`, `/lt`, `/calibrate`, `/autocal` y `/testprint` responden
+  `400` explícito (son conceptos 100% de impresora térmica: gap, backfeed, ZPL crudo).
+
 ### Auto-impresión (SSE + polling)
 - Hilo daemon `_poll_worker` corre siempre en background
 - Al activar: snapshot inicial (no imprime), luego detecta pedidos nuevos y los imprime sólo
@@ -106,6 +125,8 @@ como `_correlative` + `_correlative_date`.
 {
   "ip": "192.168.1.x",
   "port": 9100,
+  "output_mode": "thermal",
+  "a4_printer_name": "",
   "label_height_mm": 150,
   "label_width_mm": 100,
   "backfeed_dots": 0,

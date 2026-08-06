@@ -431,64 +431,93 @@ footer { text-align:center; font-size:.7rem; color:var(--text2); margin-top:20px
     <div style="font-size:.71rem;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--text2);margin-bottom:10px">Impresora</div>
     <div style="display:flex;gap:16px;margin-bottom:10px">
       <label class="ap-chk-label" style="gap:6px;font-size:.85rem">
-        <input type="radio" name="connType" value="network" id="connTypeNetwork" onchange="onConnTypeChange()">
-        <span>Red (IP)</span>
+        <input type="radio" name="outputMode" value="thermal" id="outputModeThermal" onchange="onOutputModeChange()">
+        <span>Térmica (ZPL/TSPL)</span>
       </label>
       <label class="ap-chk-label" style="gap:6px;font-size:.85rem">
-        <input type="radio" name="connType" value="usb" id="connTypeUsb" onchange="onConnTypeChange()">
-        <span>USB / instalada en Windows</span>
+        <input type="radio" name="outputMode" value="a4" id="outputModeA4" onchange="onOutputModeChange()">
+        <span>Hoja A4 (impresora normal)</span>
       </label>
     </div>
 
-    <div class="row" id="networkFields">
-      <div class="f1"><label>IP de la impresora</label><input type="text" id="printerIp" placeholder="192.168.1.100"></div>
-      <div class="fp"><label>Puerto</label><input type="number" id="printerPort" value="9100"></div>
-      <div><label>&nbsp;</label>
-        <button class="btn-s btn-sm" onclick="testPrinterConnection(this)">Probar conexión</button>
+    <div id="thermalConnFields">
+      <div style="display:flex;gap:16px;margin-bottom:10px">
+        <label class="ap-chk-label" style="gap:6px;font-size:.85rem">
+          <input type="radio" name="connType" value="network" id="connTypeNetwork" onchange="onConnTypeChange()">
+          <span>Red (IP)</span>
+        </label>
+        <label class="ap-chk-label" style="gap:6px;font-size:.85rem">
+          <input type="radio" name="connType" value="usb" id="connTypeUsb" onchange="onConnTypeChange()">
+          <span>USB / instalada en Windows</span>
+        </label>
       </div>
-      <div><label>&nbsp;</label>
-        <button class="btn-s btn-sm" onclick="saveConfig()">Guardar<span class="saved-pill" id="savedPill">✓</span></button>
+
+      <div class="row" id="networkFields">
+        <div class="f1"><label>IP de la impresora</label><input type="text" id="printerIp" placeholder="192.168.1.100"></div>
+        <div class="fp"><label>Puerto</label><input type="number" id="printerPort" value="9100"></div>
+        <div><label>&nbsp;</label>
+          <button class="btn-s btn-sm" onclick="testPrinterConnection(this)">Probar conexión</button>
+        </div>
+        <div><label>&nbsp;</label>
+          <button class="btn-s btn-sm" onclick="saveConfig()">Guardar<span class="saved-pill" id="savedPill">✓</span></button>
+        </div>
+      </div>
+
+      <div class="row" id="usbFields" style="display:none">
+        <div class="f1">
+          <label>Impresora instalada en Windows</label>
+          <select id="usbPrinterSelect"><option value="">— elegir —</option></select>
+        </div>
+        <div><label>&nbsp;</label>
+          <button class="btn-s btn-sm" onclick="refreshUsbPrinters()" title="Actualizar lista de impresoras">↻</button>
+        </div>
+        <div><label>&nbsp;</label>
+          <button class="btn-s btn-sm" onclick="testPrinterConnection(this)">Probar conexión</button>
+        </div>
+        <div><label>&nbsp;</label>
+          <button class="btn-s btn-sm" onclick="saveConfig()">Guardar<span class="saved-pill" id="savedPillUsb">✓</span></button>
+        </div>
+      </div>
+      <div class="status-bar idle" id="printerTestStatus" style="display:none;margin-top:10px">
+        <div class="s-dot"></div><span id="printerTestStatusText">—</span>
+      </div>
+      <div class="hint" id="usbHint" style="display:none;margin-top:8px">
+        La calibración automática no está disponible por USB ni en modo TSPL — usá los botones físicos de la impresora.
+      </div>
+
+      <div class="row" style="margin-top:10px">
+        <div class="f1">
+          <label>Idioma de etiqueta</label>
+          <select id="labelLanguage" onchange="onLabelLanguageChange()">
+            <option value="zpl">ZPL (Zebra / TSC compatible)</option>
+            <option value="tspl">TSPL (TSC nativo, Xprinter, Godex)</option>
+          </select>
+        </div>
+      </div>
+      <div class="hint" id="tsplWarnHint" style="display:none;margin-top:8px;color:var(--warn)">
+        ⚠️ Experimental — todavía no se probó contra una impresora TSPL real. No lo actives si tu impresora ya imprime bien en ZPL.
       </div>
     </div>
 
-    <div class="row" id="usbFields" style="display:none">
+    <div class="row" id="a4Fields" style="display:none">
       <div class="f1">
-        <label>Impresora instalada en Windows</label>
-        <select id="usbPrinterSelect"><option value="">— elegir —</option></select>
+        <label>Impresora Windows para Hoja A4</label>
+        <select id="a4PrinterSelect"><option value="">— elegir —</option></select>
       </div>
       <div><label>&nbsp;</label>
-        <button class="btn-s btn-sm" onclick="refreshUsbPrinters()" title="Actualizar lista de impresoras">↻</button>
+        <button class="btn-s btn-sm" onclick="refreshA4Printers()" title="Actualizar lista de impresoras">↻</button>
       </div>
       <div><label>&nbsp;</label>
-        <button class="btn-s btn-sm" onclick="testPrinterConnection(this)">Probar conexión</button>
-      </div>
-      <div><label>&nbsp;</label>
-        <button class="btn-s btn-sm" onclick="saveConfig()">Guardar<span class="saved-pill" id="savedPillUsb">✓</span></button>
+        <button class="btn-s btn-sm" onclick="saveConfig()">Guardar<span class="saved-pill" id="savedPillA4">✓</span></button>
       </div>
     </div>
-    <div class="status-bar idle" id="printerTestStatus" style="display:none;margin-top:10px">
-      <div class="s-dot"></div><span id="printerTestStatusText">—</span>
-    </div>
-    <div class="hint" id="usbHint" style="display:none;margin-top:8px">
-      La calibración automática no está disponible por USB ni en modo TSPL — usá los botones físicos de la impresora.
-    </div>
-
-    <div class="row" style="margin-top:10px">
-      <div class="f1">
-        <label>Idioma de etiqueta</label>
-        <select id="labelLanguage" onchange="onLabelLanguageChange()">
-          <option value="zpl">ZPL (Zebra / TSC compatible)</option>
-          <option value="tspl">TSPL (TSC nativo, Xprinter, Godex)</option>
-        </select>
-      </div>
-    </div>
-    <div class="hint" id="tsplWarnHint" style="display:none;margin-top:8px;color:var(--warn)">
-      ⚠️ Experimental — todavía no se probó contra una impresora TSPL real. No lo actives si tu impresora ya imprime bien en ZPL.
+    <div class="hint" id="a4Hint" style="display:none;margin-top:8px">
+      Se imprime la etiqueta de envío + el detalle del pedido en una sola hoja A4, en la impresora elegida — no hace falta impresora térmica.
     </div>
   </div>
 
   <!-- Calibración -->
-  <div class="card">
+  <div class="card" id="calCard">
     <button class="col-toggle" onclick="toggleCol('calBody','calArrow')">
       <span>Calibración de etiqueta</span><span class="col-arrow" id="calArrow">▾</span>
     </button>
@@ -550,7 +579,7 @@ footer { text-align:center; font-size:.7rem; color:var(--text2); margin-top:20px
   </div>
 
   <!-- Tipo de etiqueta ML -->
-  <div class="card" style="padding:12px 14px">
+  <div class="card" id="mlLabelTypeCard" style="padding:12px 14px">
     <div style="font-size:.71rem;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--text2);margin-bottom:10px">Tipo de etiqueta MercadoLibre</div>
     <div style="display:flex;gap:10px;flex-wrap:wrap">
       <label class="ap-chk-label" style="gap:8px;font-size:.85rem">
@@ -730,6 +759,11 @@ async function init() {
     const labelLang = c.label_language ?? 'zpl';
     document.getElementById('labelLanguage').value = labelLang;
     document.getElementById('tsplWarnHint').style.display = labelLang === 'tspl' ? '' : 'none';
+    const outputMode = c.output_mode ?? 'thermal';
+    document.getElementById('outputModeThermal').checked = outputMode === 'thermal';
+    document.getElementById('outputModeA4').checked      = outputMode === 'a4';
+    applyOutputModeVisibility(outputMode);
+    if (outputMode === 'a4') await refreshA4Printers(c.a4_printer_name);
     updateCalHint();
     document.getElementById('mlClientId').value      = c.ml_client_id     ?? '';
     document.getElementById('mlClientSecret').value  = c.ml_client_secret ?? '';
@@ -789,7 +823,8 @@ function toggleCol(bodyId, arrowId) {
 
 // ── Config ────────────────────────────────────────────
 async function saveConfig() {
-  const connType = document.querySelector('input[name="connType"]:checked')?.value ?? 'network';
+  const connType   = document.querySelector('input[name="connType"]:checked')?.value ?? 'network';
+  const outputMode = document.querySelector('input[name="outputMode"]:checked')?.value ?? 'thermal';
   await fetch(API + '/config', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
@@ -799,9 +834,11 @@ async function saveConfig() {
       port:                  parseInt(document.getElementById('printerPort').value) || 9100,
       windows_printer_name:  document.getElementById('usbPrinterSelect').value,
       label_language:        document.getElementById('labelLanguage').value,
+      output_mode:           outputMode,
+      a4_printer_name:       document.getElementById('a4PrinterSelect').value,
     })
   });
-  flashPill(connType === 'usb' ? 'savedPillUsb' : 'savedPill');
+  flashPill(outputMode === 'a4' ? 'savedPillA4' : (connType === 'usb' ? 'savedPillUsb' : 'savedPill'));
 }
 
 // Calibración automática (~JC/~HS) es TCP + ZPL — no disponible por USB
@@ -811,6 +848,42 @@ function updateCalHint() {
   const usb  = document.querySelector('input[name="connType"]:checked')?.value === 'usb';
   const tspl = document.getElementById('labelLanguage').value === 'tspl';
   document.getElementById('usbHint').style.display = (usb || tspl) ? '' : 'none';
+}
+
+// Modo A4 usa una impresora Windows normal (GDI) en vez de comandos crudos
+// ZPL/TSPL — oculta todo lo específico de la impresora térmica (conexión,
+// idioma de etiqueta, calibración, tipo de etiqueta ML) y muestra el
+// selector de impresora normal.
+function applyOutputModeVisibility(outputMode) {
+  const a4 = outputMode === 'a4';
+  document.getElementById('thermalConnFields').style.display = a4 ? 'none' : '';
+  document.getElementById('a4Fields').style.display           = a4 ? '' : 'none';
+  document.getElementById('a4Hint').style.display              = a4 ? '' : 'none';
+  document.getElementById('calCard').style.display             = a4 ? 'none' : '';
+  document.getElementById('mlLabelTypeCard').style.display      = a4 ? 'none' : '';
+}
+
+function onOutputModeChange() {
+  const outputMode = document.querySelector('input[name="outputMode"]:checked')?.value ?? 'thermal';
+  applyOutputModeVisibility(outputMode);
+  if (outputMode === 'a4' && !document.getElementById('a4PrinterSelect').dataset.loaded) refreshA4Printers();
+  saveConfig();
+}
+
+async function refreshA4Printers(selectValue) {
+  const sel = document.getElementById('a4PrinterSelect');
+  const current = selectValue ?? sel.value;
+  try {
+    const r = await fetch(API + '/printers/list');
+    const d = await r.json();
+    if (!d.ok) { toast('✗ No se pudo leer la lista de impresoras: ' + d.error, 'err'); return; }
+    sel.innerHTML = '<option value="">— elegir —</option>' +
+      d.printers.map(p => `<option value="${p}">${p}${p === d.default ? ' (predeterminada)' : ''}</option>`).join('');
+    if (current && d.printers.includes(current)) sel.value = current;
+    sel.dataset.loaded = '1';
+  } catch(e) {
+    toast('✗ No se pudo leer la lista de impresoras', 'err');
+  }
 }
 
 function onConnTypeChange() {

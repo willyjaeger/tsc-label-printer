@@ -44,6 +44,7 @@ python -m PyInstaller ^
     --hidden-import=webview.platforms.edgechromium ^
     --hidden-import=webview.platforms.winforms ^
     --hidden-import=win32print ^
+    --hidden-import=win32ui ^
     --hidden-import=win32timezone ^
     --collect-all=requests ^
     --collect-all=fitz ^

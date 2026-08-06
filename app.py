@@ -51,6 +51,8 @@ DEFAULT_CONFIG = {
     'connection_type': 'network',   # 'network' (TCP a IP:puerto) | 'usb' (impresora instalada en Windows)
     'windows_printer_name': '',     # nombre exacto tal como figura en Windows, solo si connection_type == 'usb'
     'label_language': 'zpl',        # 'zpl' (default, sin cambios) | 'tspl' (TSC nativo/Xprinter/Godex, camino aparte)
+    'output_mode': 'thermal',       # 'thermal' (default, sin cambios) | 'a4' (hoja A4 en impresora normal)
+    'a4_printer_name': '',          # impresora Windows para modo A4 — separada de windows_printer_name (USB térmica)
     'label_height_mm': 150,
     'label_width_mm': 100,
     'backfeed_dots': 0,
@@ -982,6 +984,9 @@ def print_label():
     err = _require_license()
     if err: return err
     cfg = load_config()
+    if cfg.get('output_mode') == 'a4':
+        return jsonify({'ok': False, 'error':
+            'No disponible en modo Hoja A4 — subir ZPL/TSPL crudo requiere impresora térmica.'}), 400
     raw = request.get_data()
     if not raw:
         return jsonify({'ok': False, 'error': 'Archivo vacío'}), 400
@@ -1015,6 +1020,8 @@ def print_label():
 def set_lt():
     """Aplica ^LT (corrección de posición) en tiempo real y guarda en config."""
     cfg  = load_config()
+    if cfg.get('output_mode') == 'a4':
+        return jsonify({'ok': False, 'error': 'No aplica en modo Hoja A4.'}), 400
     body = request.get_json(silent=True) or {}
     value = int(body.get('value', 0))
     cfg['backfeed_dots'] = value
@@ -1029,6 +1036,8 @@ def set_lt():
 @app.route('/calibrate', methods=['POST'])
 def calibrate():
     cfg = load_config()
+    if cfg.get('output_mode') == 'a4':
+        return jsonify({'ok': False, 'error': 'No aplica en modo Hoja A4 — no hay gap/backfeed que calibrar.'}), 400
     params = request.get_json() or {}
     cfg.update({k: v for k, v in params.items() if v is not None})
     save_config(cfg)
@@ -1116,6 +1125,9 @@ def printer_hs():
 @app.route('/autocal', methods=['POST'])
 def autocal():
     cfg = load_config()
+    if cfg.get('output_mode') == 'a4':
+        return jsonify({'ok': False, 'error':
+            'No disponible en modo Hoja A4 — no aplica calibración de gap en impresora normal.'}), 400
     if cfg.get('connection_type') == 'usb':
         return jsonify({'ok': False, 'error':
             'No disponible con impresora USB — calibrá con los botones físicos de la impresora.'}), 400
@@ -1180,6 +1192,8 @@ def autocal():
 @app.route('/testprint', methods=['POST'])
 def testprint():
     cfg = load_config()
+    if cfg.get('output_mode') == 'a4':
+        return jsonify({'ok': False, 'error': 'No disponible en modo Hoja A4.'}), 400
     dpi = int(cfg.get('dpi', 203))
     dpm = dpi / 25.4
     h = round(float(cfg.get('label_height_mm', 150)) * dpm)
@@ -1468,12 +1482,13 @@ def _extract_pdf(content, status_code, response_text, content_type):
     return None, f'ML no devolvió un PDF válido. Respuesta: {preview}'
 
 
-def _fetch_ml_label(sid, token, cfg):
+def _fetch_ml_label(sid, token, cfg, force_pdf=False):
     """Pide la etiqueta de un envío a ML — ZPL2 (default) o PDF si
-    label_language es 'tspl'. Punto único que decide qué formato pedir,
-    para no repetir esta rama en cada lugar que imprime.
-    Devuelve (payload_bytes, is_zpl, error_msg)."""
-    want_tspl = cfg.get('label_language') == 'tspl'
+    label_language es 'tspl' o si force_pdf=True (modo A4, que siempre
+    necesita el PDF para poder renderizarlo como imagen). Punto único que
+    decide qué formato pedir, para no repetir esta rama en cada lugar que
+    imprime. Devuelve (payload_bytes, is_zpl, error_msg)."""
+    want_tspl = force_pdf or cfg.get('label_language') == 'tspl'
     r = http.get(
         f'{ML_API}/shipment_labels',
         params={'shipment_ids': sid, 'response_type': 'pdf' if want_tspl else 'zpl2'},
@@ -1493,17 +1508,16 @@ def count_labels(data: bytes) -> int:
     return max(1, len(_re.findall(rb'\^XA', data, _re.IGNORECASE)))
 
 
-def _pdf_page_to_bitmap(pdf_bytes: bytes, width_mm: float = 100.0,
-                         height_mm: float = 150.0, dpi: int = 203,
-                         overlay_text: str = None):
-    """Renderiza la primera página de un PDF a un bitmap 1bpp (1=imprimir,
-    0=blanco), empaquetado MSB-first — el mismo formato de datos crudos que
-    usan tanto ^GFA (ZPL) como BITMAP (TSPL), solo cambia el "envoltorio" de
-    comando alrededor. Lógica de renderizado idéntica a la que ya usaba
-    pdf_to_zpl (sin cambios de comportamiento para ese camino).
+def _pdf_page_to_image(pdf_bytes: bytes, width_mm: float = 100.0,
+                        height_mm: float = 150.0, dpi: int = 203,
+                        overlay_text: str = None):
+    """Renderiza la primera página de un PDF a una PIL.Image en gris,
+    escalada y centrada sobre un canvas blanco del tamaño pedido. Capa de
+    renderizado compartida por _pdf_page_to_bitmap (empaqueta a 1bpp para
+    ZPL/TSPL) y label_image_for_a4 (la deja como imagen para modo A4).
     Si se pasa overlay_text, se dibuja en la esquina inferior-derecha (mismo
     lugar donde _inject_correlative_into_zpl pone el correlativo en ZPL).
-    Devuelve (bitmap_bytes, target_w, target_h, bytes_per_row)."""
+    Devuelve (canvas: PIL.Image, target_w, target_h)."""
     try:
         import fitz  # pymupdf
     except ImportError:
@@ -1554,6 +1568,35 @@ def _pdf_page_to_bitmap(pdf_bytes: bytes, width_mm: float = 100.0,
         y = target_h - th - pad - 6
         draw.rectangle([x - 6, y - 4, x + tw + 6, y + th + 8], fill=255)
         draw.text((x, y), overlay_text, fill=0, font=font)
+
+    return canvas, target_w, target_h
+
+
+def label_image_for_a4(pdf_bytes: bytes, width_mm: float = 100.0,
+                        height_mm: float = 150.0, dpi: int = 203):
+    """Etiqueta de envío como PIL.Image plana, para pegar en la hoja A4
+    (modo output_mode == 'a4'). No empaqueta a 1bpp — eso es solo para
+    comandos de impresora térmica."""
+    canvas, _, _ = _pdf_page_to_image(pdf_bytes, width_mm, height_mm, dpi)
+    return canvas
+
+
+def _pdf_page_to_bitmap(pdf_bytes: bytes, width_mm: float = 100.0,
+                         height_mm: float = 150.0, dpi: int = 203,
+                         overlay_text: str = None):
+    """Renderiza la primera página de un PDF a un bitmap 1bpp (1=imprimir,
+    0=blanco), empaquetado MSB-first — el mismo formato de datos crudos que
+    usan tanto ^GFA (ZPL) como BITMAP (TSPL), solo cambia el "envoltorio" de
+    comando alrededor. Envoltorio fino sobre _pdf_page_to_image + empaquetado
+    (sin cambios de comportamiento respecto a la versión anterior).
+    Devuelve (bitmap_bytes, target_w, target_h, bytes_per_row)."""
+    try:
+        from PIL import Image
+    except ImportError:
+        raise RuntimeError('Pillow no instalado. Ejecutar: pip install Pillow')
+
+    canvas, target_w, target_h = _pdf_page_to_image(
+        pdf_bytes, width_mm, height_mm, dpi, overlay_text=overlay_text)
 
     bytes_per_row = (target_w + 7) // 8
     total_bytes   = bytes_per_row * target_h
@@ -1822,6 +1865,218 @@ def _build_detail_tspl(order_data, cfg):
 
     lines.append('PRINT 1,1')
     return ('\r\n'.join(lines) + '\r\n').encode('latin-1', errors='replace')
+
+
+def _build_detail_image(order_data, cfg, width_px, scale=1.0):
+    """Equivalente en imagen de _build_detail_zpl/_build_detail_tspl: mismo
+    contenido (correlativo, comprador, artículos), pero dibujado con
+    PIL.ImageDraw para pegar en la hoja A4 (modo A4). Sin código de barras —
+    la etiqueta de ML de al lado ya tiene su propio QR, no hace falta
+    duplicar. Tipografía grande a propósito, pensada para leerse cómodo sin
+    anteojos. `scale` achica fuentes/espaciados de forma proporcional — lo
+    usa _build_a4_page para que un pedido con muchos artículos siga entrando
+    en una sola hoja, con un piso que nunca la hace ilegible. Devuelve una
+    PIL.Image recortada a su alto real de contenido."""
+    from PIL import Image, ImageDraw, ImageFont
+    import textwrap
+
+    def px(n):
+        return max(1, int(round(n * scale)))
+
+    def font(size, bold=False):
+        name = 'arialbd.ttf' if bold else 'arial.ttf'
+        try:
+            return ImageFont.truetype(name, size=size)
+        except Exception:
+            return ImageFont.load_default()
+
+    f_big   = font(px(110), bold=True)   # correlativo
+    f_h     = font(px(52),  bold=True)   # "Pedido # ..."
+    f_body  = font(px(46))               # comprador
+    f_item  = font(px(42))               # artículos
+    f_small = font(px(30))               # referencia de envío
+
+    buyer       = str(order_data.get('buyer',       ''))[:60]
+    order_id    = str(order_data.get('order_id',    ''))
+    shipment_id = str(order_data.get('shipment_id', ''))
+    correlative = order_data.get('correlative')
+    items       = order_data.get('items', [])
+
+    m       = px(36)
+    # Generoso a propósito — no queremos cortar artículos silenciosamente
+    # (se recorta al alto real de contenido al final, esto es solo un techo).
+    max_h   = px(500) + max(1, len(items)) * px(260)
+    canvas  = Image.new('L', (width_px, max_h), 255)
+    draw    = ImageDraw.Draw(canvas)
+    y       = m
+
+    if correlative is not None:
+        draw.text((m, y), f'#{correlative:03d}', font=f_big, fill=0)
+        y += px(140)
+
+    def hsep(thick=None):
+        nonlocal y
+        thick = px(4) if thick is None else thick
+        draw.line([(m, y), (width_px - m, y)], fill=0, width=thick)
+        y += thick + px(22)
+
+    hsep()
+    if order_id:
+        draw.text((m, y), f'Pedido # {order_id}', font=f_h, fill=0)
+        y += px(66)
+    if buyer:
+        draw.text((m, y), buyer, font=f_body, fill=0)
+        y += px(58)
+    if shipment_id:
+        draw.text((m, y), f'Envío: {shipment_id}', font=f_small, fill=0)
+        y += px(44)
+    hsep()
+
+    cpl = max(8, (width_px - 2 * m) // px(24))
+    for item in items:
+        qty   = item.get('qty', 1)
+        title = str(item.get('title', ''))
+        for line in (textwrap.wrap(f'{qty}  {title}', width=cpl)[:6] or ['']):
+            draw.text((m, y), line, font=f_item, fill=0)
+            y += px(52)
+        y += px(18)
+        draw.line([(m, y), (width_px - m, y)], fill=0, width=px(2))
+        y += px(18)
+
+    return canvas.crop((0, 0, width_px, min(y + m, max_h)))
+
+
+def _build_a4_page(label_img, order_data, cfg):
+    """Compone la hoja A4 vertical (normal, retrato) para modo
+    output_mode == 'a4' — SIEMPRE una sola hoja: etiqueta de envío arriba,
+    ROTADA 90° (la etiqueta de ML es angosta y alta — girada de costado
+    aprovecha todo el ancho de la hoja y sale bastante más grande), y debajo
+    el detalle del pedido (comprador, TODOS los artículos, tipografía
+    grande). Si el detalle a tamaño normal no entra en lo que queda de hoja,
+    se redibuja más chico (parámetro `scale` de _build_detail_image) hasta
+    que entre — nunca se pasa a una segunda hoja ni se recorta un artículo
+    mientras el achique razonable (piso 70% del tamaño normal, para que siga
+    siendo legible sin anteojos) alcance. Lienzo a 300dpi, 2480×3508px
+    (210×297mm). Si order_data viene vacío/None (hoy pasa con TiendaNube,
+    que no arma un detalle local — la etiqueta de Andreani ya trae la
+    dirección impresa por el correo), se omite el bloque de detalle, la
+    etiqueta se deja SIN rotar (se lee de igual como la imprimiría cualquier
+    label normal) y ocupa casi toda la hoja. Devuelve una lista de un solo
+    PIL.Image (lista por compatibilidad con print_a4_image)."""
+    from PIL import Image, ImageDraw
+
+    page_w, page_h = 2480, 3508
+    margin = 60
+    avail_w = page_w - 2 * margin
+
+    page = Image.new('L', (page_w, page_h), 255)
+
+    if not order_data:
+        avail_h = page_h - 2 * margin
+        lw, lh  = label_img.size
+        scale   = min(avail_w / lw, avail_h / lh)
+        new_w, new_h = max(1, int(lw * scale)), max(1, int(lh * scale))
+        resized = label_img.resize((new_w, new_h), Image.LANCZOS)
+        page.paste(resized, ((page_w - new_w) // 2, margin))
+        return [page]
+
+    # Etiqueta girada 90° (angosta-y-alta -> ancha-y-baja): usa todo el ancho
+    # de la hoja, hasta 48% de alto — sale bastante más grande que sin girar.
+    label_img = label_img.transpose(Image.ROTATE_90)
+    max_label_h = int(page_h * 0.48) - margin
+    lw, lh = label_img.size
+    label_scale = min(avail_w / lw, max_label_h / lh)
+    new_w, new_h = max(1, int(lw * label_scale)), max(1, int(lh * label_scale))
+    resized = label_img.resize((new_w, new_h), Image.LANCZOS)
+    page.paste(resized, ((page_w - new_w) // 2, margin))
+
+    label_bottom   = margin + new_h
+    detail_top     = label_bottom + 70
+    avail_detail_h = page_h - margin - detail_top
+
+    detail_img = _build_detail_image(order_data, cfg, width_px=avail_w, scale=1.0)
+    if detail_img.height > avail_detail_h:
+        # Achicar proporcionalmente al espacio real disponible, con un piso
+        # de legibilidad (70% del tamaño normal — tiene que poder leerse sin
+        # anteojos). Pedidos con MUCHOS artículos son un caso raro; por debajo
+        # de este piso preferimos que el texto quede apretado/recortado al
+        # final antes que hacerlo ilegiblemente chico.
+        detail_scale = max(0.7, avail_detail_h / detail_img.height)
+        detail_img = _build_detail_image(order_data, cfg, width_px=avail_w, scale=detail_scale)
+        if detail_img.height > avail_detail_h:
+            # Caso extremo (pedido con muchísimos artículos): último recurso,
+            # recortar — pero ya redujimos todo lo razonable antes de llegar acá.
+            detail_img = detail_img.crop((0, 0, avail_w, avail_detail_h))
+
+    draw = ImageDraw.Draw(page)
+    draw.line([(margin, label_bottom + 20), (page_w - margin, label_bottom + 20)], fill=0, width=4)
+    page.paste(detail_img, (margin, detail_top))
+
+    return [page]
+
+
+def print_a4_image(printer_name, pil_images, retries=1, retry_delay=0.6):
+    """Imprime una o varias PIL.Image como UN solo trabajo de impresión en una
+    impresora Windows normal — modo documento (GDI/StartDoc), no RAW: es el
+    equivalente de send_to_printer_usb pero para output_mode == 'a4'.
+    Silencioso, sin diálogo de impresión. Acepta una imagen sola o una lista
+    (compatibilidad — hoy _build_a4_page siempre arma una sola hoja) — todas
+    salen del mismo StartDoc/EndDoc, una hoja física por imagen. Fuerza papel
+    A4 + orientación vertical vía DEVMODE — si no se fija esto, la impresora
+    usa lo que tenga configurado por default (a veces Carta/Letter, otra
+    proporción, o apaisada), y el lienzo fijo de 2480×3508 se estira para
+    llenar esa hoja distinta, deformando la etiqueta."""
+    if not printer_name:
+        raise RuntimeError('No hay impresora seleccionada para modo Hoja A4 en Configuración.')
+    if not isinstance(pil_images, (list, tuple)):
+        pil_images = [pil_images]
+    try:
+        import win32ui
+        import win32print
+        import win32con
+        import win32gui
+        from PIL import ImageWin
+    except ImportError:
+        raise RuntimeError('pywin32 no instalado — no se puede imprimir en modo Hoja A4.')
+
+    HORZRES, VERTRES = 8, 10
+    last_err = None
+    for attempt in range(retries + 1):
+        try:
+            hprinter = win32print.OpenPrinter(printer_name)
+            try:
+                devmode = win32print.GetPrinter(hprinter, 2)['pDevMode']
+                devmode.PaperSize   = win32con.DMPAPER_A4
+                devmode.Orientation = win32con.DMORIENT_PORTRAIT
+                devmode.Fields |= win32con.DM_PAPERSIZE | win32con.DM_ORIENTATION
+                win32print.DocumentProperties(
+                    0, hprinter, printer_name, devmode, devmode,
+                    win32con.DM_IN_BUFFER | win32con.DM_OUT_BUFFER)
+            finally:
+                win32print.ClosePrinter(hprinter)
+
+            hdc = win32ui.CreateDCFromHandle(win32gui.CreateDC('WINSPOOL', printer_name, devmode))
+            try:
+                hdc.StartDoc('EnvioBot - Etiqueta A4')
+                w = hdc.GetDeviceCaps(HORZRES)
+                h = hdc.GetDeviceCaps(VERTRES)
+                for pil_image in pil_images:
+                    hdc.StartPage()
+                    dib = ImageWin.Dib(pil_image.convert('RGB'))
+                    dib.draw(hdc.GetHandleOutput(), (0, 0, w, h))
+                    hdc.EndPage()
+                hdc.EndDoc()
+            finally:
+                hdc.DeleteDC()
+            return
+        except Exception as e:
+            last_err = e
+            if attempt < retries:
+                logger.warning('print_a4_image: intento %d/%d falló (%s), reintentando…',
+                                attempt + 1, retries + 1, e)
+                time.sleep(retry_delay)
+    logger.error('print_a4_image: sin éxito tras %d intentos — %s', retries + 1, last_err)
+    raise last_err
 
 
 def _build_combo_zpl(order_data, ml_zpl_bytes, cfg):
@@ -2099,10 +2354,13 @@ def ml_print(shipment_id):
         return jsonify({'ok': False, 'need_login': True}), 401
 
     cfg        = load_config()
+    want_a4    = cfg.get('output_mode') == 'a4'
     order_data = request.get_json(silent=True) or {}
     try:
-        zpl, is_zpl, err = _fetch_ml_label(shipment_id, token, cfg)
+        zpl, is_zpl, err = _fetch_ml_label(shipment_id, token, cfg, force_pdf=want_a4)
         if err:
+            logger.error('ml_print(%s): _fetch_ml_label falló (force_pdf=%s) — %s',
+                          shipment_id, want_a4, err)
             return jsonify({'ok': False, 'error': err}), 502
 
         # Si no vienen items desde el frontend (reimpresión), buscar en orders.json
@@ -2147,6 +2405,18 @@ def ml_print(shipment_id):
             corr = next_correlative()
             order_data['shipment_id'] = str(shipment_id)
             order_data['correlative'] = corr
+
+        if want_a4:
+            label_img = label_image_for_a4(zpl, width_mm=float(cfg.get('label_width_mm', 100)),
+                                            height_mm=float(cfg.get('label_height_mm', 150)),
+                                            dpi=int(cfg.get('dpi', 203)))
+            page = _build_a4_page(label_img, order_data, cfg)
+            print_a4_image(cfg.get('a4_printer_name'), page)
+            _save_printed_order(order_data)
+            return jsonify({'ok': True, 'labels': 1,
+                            'items_used': len(order_data.get('items', []))})
+
+        if order_data.get('items'):
             payload, n_labels = _print_ml_order(zpl, is_zpl, order_data, cfg)
         elif is_zpl:
             payload  = zpl
@@ -2163,6 +2433,7 @@ def ml_print(shipment_id):
     except socket.timeout:
         return jsonify({'ok': False, 'error': f"Timeout de impresora: {cfg['ip']}:{cfg['port']}"}), 500
     except Exception as e:
+        logger.error('ml_print(%s) falló — %s', shipment_id, e, exc_info=True)
         return jsonify({'ok': False, 'error': str(e)}), 500
 
 
@@ -2175,28 +2446,46 @@ def ml_print_all():
     if not token:
         return jsonify({'ok': False, 'need_login': True}), 401
 
-    cfg    = load_config()
-    body   = request.get_json() or {}
-    orders = body.get('orders', [])
+    cfg     = load_config()
+    want_a4 = cfg.get('output_mode') == 'a4'
+    body    = request.get_json() or {}
+    orders  = body.get('orders', [])
     if not orders:
         return jsonify({'ok': False, 'error': 'Sin envíos'}), 400
 
-    combined = b''
-    failed   = []
+    combined   = b''
+    failed     = []
+    printed_a4 = 0
 
     for order in orders[:50]:
         sid = order.get('shipment_id')
         if not sid:
             continue
         try:
-            zpl, is_zpl, err = _fetch_ml_label(sid, token, cfg)
+            zpl, is_zpl, err = _fetch_ml_label(sid, token, cfg, force_pdf=want_a4)
             if err:
+                logger.error('ml_print_all(%s): _fetch_ml_label falló (force_pdf=%s) — %s',
+                              sid, want_a4, err)
                 failed.append(str(sid))
                 continue
             order['shipment_id'] = str(sid)
             if order.get('items'):
                 corr = next_correlative()
                 order['correlative'] = corr
+
+            if want_a4:
+                # Modo A4: un trabajo de impresión por pedido — no se puede
+                # concatenar como los bytes ZPL/TSPL de más abajo.
+                label_img = label_image_for_a4(zpl, width_mm=float(cfg.get('label_width_mm', 100)),
+                                                height_mm=float(cfg.get('label_height_mm', 150)),
+                                                dpi=int(cfg.get('dpi', 203)))
+                page = _build_a4_page(label_img, order, cfg)
+                print_a4_image(cfg.get('a4_printer_name'), page)
+                printed_a4 += 1
+                _save_printed_order(order)
+                continue
+
+            if order.get('items'):
                 chunk, _ = _print_ml_order(zpl, is_zpl, order, cfg)
                 combined += chunk
             elif is_zpl:
@@ -2206,8 +2495,14 @@ def ml_print_all():
                                          height_mm=float(cfg.get('label_height_mm', 150)),
                                          dpi=int(cfg.get('dpi', 203)))
             _save_printed_order(order)
-        except Exception:
+        except Exception as e:
+            logger.error('ml_print_all(%s) falló — %s', sid, e, exc_info=True)
             failed.append(str(sid))
+
+    if want_a4:
+        if not printed_a4:
+            return jsonify({'ok': False, 'error': 'No se pudo imprimir ninguna etiqueta.'}), 502
+        return jsonify({'ok': True, 'printed': printed_a4, 'labels': printed_a4, 'failed': failed})
 
     if not combined:
         return jsonify({'ok': False, 'error': 'No se pudo obtener ninguna etiqueta.'}), 502
@@ -2400,12 +2695,16 @@ def tn_print(order_id):
         # 2. Obtener PDF de Andreani
         pdf_bytes = _tn_get_label_pdf(fo['id'], cfg)
 
-        # 3. Convertir PDF → etiqueta (ZPL o TSPL según configuración)
-        # Andreani labels are always 100×150mm regardless of ML combo config
-        zpl = _pdf_to_label(pdf_bytes, cfg, width_mm=100.0, height_mm=150.0)
-
-        # 4. Imprimir
-        print_raw(cfg, zpl)
+        # 3. Imprimir — hoja A4 en impresora normal, o ZPL/TSPL en térmica
+        if cfg.get('output_mode') == 'a4':
+            label_img = label_image_for_a4(pdf_bytes, width_mm=100.0, height_mm=150.0,
+                                            dpi=int(cfg.get('dpi', 203)))
+            page = _build_a4_page(label_img, None, cfg)
+            print_a4_image(cfg.get('a4_printer_name'), page)
+        else:
+            # Andreani labels are always 100×150mm regardless of ML combo config
+            zpl = _pdf_to_label(pdf_bytes, cfg, width_mm=100.0, height_mm=150.0)
+            print_raw(cfg, zpl)
         return jsonify({'ok': True, 'labels': 1, 'fulfillment_id': fo['id']})
 
     except socket.timeout:
@@ -2413,6 +2712,7 @@ def tn_print(order_id):
     except ConnectionRefusedError:
         return jsonify({'ok': False, 'error': 'Impresora no responde'}), 500
     except Exception as e:
+        logger.error('tn_print(%s) falló — %s', order_id, e, exc_info=True)
         return jsonify({'ok': False, 'error': str(e)}), 500
 
 
@@ -2424,8 +2724,9 @@ def tn_print_all():
     token = _tn_get_valid_token()
     if not token:
         return jsonify({'ok': False, 'need_login': True}), 401
-    cfg      = load_config()
-    body     = request.get_json() or {}
+    cfg       = load_config()
+    want_a4   = cfg.get('output_mode') == 'a4'
+    body      = request.get_json() or {}
     order_ids = body.get('order_ids', [])
     if not order_ids:
         return jsonify({'ok': False, 'error': 'Sin pedidos'}), 400
@@ -2444,12 +2745,24 @@ def tn_print_all():
                 failed.append(str(oid))
                 continue
             pdf_bytes = _tn_get_label_pdf(fo['id'], cfg)
-            zpl = _pdf_to_label(pdf_bytes, cfg, width_mm=100.0, height_mm=150.0)
-            combined += zpl
+            if want_a4:
+                # Modo A4: un trabajo de impresión por pedido, no se concatena.
+                label_img = label_image_for_a4(pdf_bytes, width_mm=100.0, height_mm=150.0,
+                                                dpi=int(cfg.get('dpi', 203)))
+                page = _build_a4_page(label_img, None, cfg)
+                print_a4_image(cfg.get('a4_printer_name'), page)
+            else:
+                zpl = _pdf_to_label(pdf_bytes, cfg, width_mm=100.0, height_mm=150.0)
+                combined += zpl
             printed  += 1
         except Exception as e:
             logger.warning('tn_print_all: falló pedido %s — %s', oid, e)
             failed.append(str(oid))
+
+    if want_a4:
+        if not printed:
+            return jsonify({'ok': False, 'error': 'No se pudo imprimir ninguna etiqueta.'}), 502
+        return jsonify({'ok': True, 'printed': printed, 'labels': printed, 'failed': failed})
 
     if not combined:
         return jsonify({'ok': False, 'error': 'No se pudo obtener ninguna etiqueta.'}), 502

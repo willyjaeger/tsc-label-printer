@@ -25,6 +25,15 @@ define('API_SECRET', 'eb_9k4m2p7n1q8r5t3vw6x');
 //   C:\laragon\bin\php\php-8.3.30-Win32-vs16-x64\php.exe
 define('ADMIN_PASS_HASH', 'PEGAR_ACA_EL_HASH_GENERADO');
 
+// App compartida de MercadoLibre — para que el cliente solo apriete
+// "Conectar" sin crear su propia app en developers.mercadolibre.com.ar.
+// client_id es público (viaja en la URL del navegador en cada login, por
+// eso también está embebido como ML_SHARED_CLIENT_ID en app.py). El
+// client_secret NUNCA debe ir a app.py/al .exe — vive solo acá, en el
+// servidor, y lo usa ml_token.php para el intercambio real con ML.
+define('ML_SHARED_CLIENT_ID', 'TU_APP_ID_DE_ML');
+define('ML_SHARED_CLIENT_SECRET', 'TU_SECRET_KEY_DE_ML');
+
 function db_connect() {
     $db = new mysqli(DB_HOST, DB_USER, DB_PASS, DB_NAME);
     if ($db->connect_error) {

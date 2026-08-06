@@ -67,6 +67,7 @@ DEFAULT_CONFIG = {
     'dpi': 203,
     'ml_label_type': 'standard',   # 'standard' = 100x150 (2 etiquetas) | 'combo' = 100x190 con troquel
     'ml_die_cut_mm': 40,           # altura del troquel en mm (solo para combo)
+    'ml_auth_mode': 'own_app',      # 'own_app' (default, sin cambios) | 'shared' (app de EnvioBot, sin registrar nada)
     'ml_client_id': '',
     'ml_client_secret': '',
     'tn_client_id': '',
@@ -77,6 +78,12 @@ ML_AUTH_URL  = 'https://auth.mercadolibre.com.ar/authorization'
 ML_TOKEN_URL = 'https://api.mercadolibre.com/oauth/token'
 ML_API       = 'https://api.mercadolibre.com'
 REDIRECT_URI = 'https://willyjaeger.github.io/tsc-label-printer/callback.html'
+
+# App compartida de EnvioBot para MercadoLibre — el client_id es público (viaja
+# en la URL del navegador en cada login), no hay problema en embeberlo acá. El
+# client_secret NUNCA va acá — vive solo en config.php del servidor de
+# licencias, y lo usa ml_token.php para el intercambio real con ML.
+ML_SHARED_CLIENT_ID = '2422887132662747'   # App "EnvioBot" registrada en ML, creada 2026-08-06
 
 # ── Licencias ──────────────────────────────────────────────────────────────────
 _LICENSE_SERVER = 'https://logax.com.ar/enviobot'
@@ -238,6 +245,29 @@ def _license_activate(key):
         return ok, reason, ltype
     except Exception as e:
         return False, 'server_unreachable', ''
+
+
+def _ml_shared_token_request(payload_extra):
+    """Intercambio de token OAuth de MercadoLibre a través del proxy del
+    servidor de licencias (backend/ml_token.php) — usado cuando
+    ml_auth_mode == 'shared' (app compartida de EnvioBot: el cliente no
+    tiene su propia app registrada en ML). Mismo patrón de request que
+    _license_activate/_license_validate: {secret, key, fingerprint} + lo
+    que haga falta según el grant (code/code_verifier o refresh_token).
+    Devuelve el dict de respuesta tal cual — pass-through de ML si el gate
+    de licencia pasó (con 'access_token' o 'error' como cualquier respuesta
+    de ML), o {'ok': False, 'reason': '...'} si no (licencia vencida,
+    revocada, en otra máquina, etc. — forma distinta a error de ML a
+    propósito, para no confundir ambos casos)."""
+    cfg = load_config()
+    key = cfg.get('license_key', '').strip().upper()
+    fp  = _machine_fingerprint()
+    r = http.post(
+        f'{_LICENSE_SERVER}/ml_token.php',
+        json={'secret': _LICENSE_SECRET, 'key': key, 'fingerprint': fp, **payload_extra},
+        timeout=15,
+    )
+    return r.json()
 
 
 def _require_license():
@@ -541,13 +571,24 @@ def _refresh_token(cfg):
     if not http:
         return None
     try:
-        r = http.post(ML_TOKEN_URL, data={
-            'grant_type':    'refresh_token',
-            'client_id':     cfg.get('ml_client_id', ''),
-            'client_secret': cfg.get('ml_client_secret', ''),
-            'refresh_token': cfg.get('ml_refresh_token', ''),
-        }, timeout=15)
-        data = r.json()
+        if cfg.get('ml_auth_mode') == 'shared':
+            data = _ml_shared_token_request({
+                'grant_type':    'refresh_token',
+                'refresh_token': cfg.get('ml_refresh_token', ''),
+            })
+            if data.get('ok') is False:
+                # Falla del gate de licencia, no de ML — no es "reconectar
+                # la cuenta", es un problema de suscripción/licencia.
+                logger.warning('ML refresh_token (shared): licencia rechazó — %s', data.get('reason'))
+                return None
+        else:
+            r = http.post(ML_TOKEN_URL, data={
+                'grant_type':    'refresh_token',
+                'client_id':     cfg.get('ml_client_id', ''),
+                'client_secret': cfg.get('ml_client_secret', ''),
+                'refresh_token': cfg.get('ml_refresh_token', ''),
+            }, timeout=15)
+            data = r.json()
         if 'access_token' not in data:
             error = data.get('error', '')
             if error in ('invalid_grant', 'invalid_client', 'unauthorized_client'):
@@ -1316,14 +1357,16 @@ def testprint():
 
 @app.route('/auth/login')
 def auth_login():
-    cfg = load_config()
-    if not cfg.get('ml_client_id'):
+    cfg    = load_config()
+    shared = cfg.get('ml_auth_mode') == 'shared'
+    if not shared and not cfg.get('ml_client_id'):
         return redirect('/?error=Configurar+App+ID+primero')
+    client_id = ML_SHARED_CLIENT_ID if shared else cfg['ml_client_id']
     state = secrets.token_hex(16)
     verifier, challenge = _pkce_pair()
     _pkce_store[state] = verifier
     url = (f"{ML_AUTH_URL}?response_type=code"
-           f"&client_id={cfg['ml_client_id']}"
+           f"&client_id={client_id}"
            f"&redirect_uri={REDIRECT_URI}"
            f"&state={state}"
            f"&code_challenge={challenge}"
@@ -1342,18 +1385,29 @@ def auth_callback():
     verifier = _pkce_store.pop(state, None)
     cfg = load_config()
     try:
-        payload = {
-            'grant_type':    'authorization_code',
-            'client_id':     cfg['ml_client_id'],
-            'client_secret': cfg['ml_client_secret'],
-            'code':          code,
-            'redirect_uri':  REDIRECT_URI,
-        }
-        if verifier:
-            payload['code_verifier'] = verifier
+        if cfg.get('ml_auth_mode') == 'shared':
+            payload = {'grant_type': 'authorization_code', 'code': code}
+            if verifier:
+                payload['code_verifier'] = verifier
+            data = _ml_shared_token_request(payload)
+            if data.get('ok') is False:
+                # Falla del gate de licencia (no de ML) — mensaje distinto
+                # de "token_error" para no confundir "hay que renovar la
+                # suscripción" con "algo falló con MercadoLibre".
+                return redirect(f'/?tab=orders&error=licencia_{data.get("reason","error")}')
+        else:
+            payload = {
+                'grant_type':    'authorization_code',
+                'client_id':     cfg['ml_client_id'],
+                'client_secret': cfg['ml_client_secret'],
+                'code':          code,
+                'redirect_uri':  REDIRECT_URI,
+            }
+            if verifier:
+                payload['code_verifier'] = verifier
+            r = http.post(ML_TOKEN_URL, data=payload, timeout=15)
+            data = r.json()
 
-        r = http.post(ML_TOKEN_URL, data=payload, timeout=15)
-        data = r.json()
         if 'access_token' not in data:
             return redirect('/?tab=orders&error=token_error')
         cfg['ml_access_token']     = data['access_token']
@@ -3170,7 +3224,8 @@ def start():
 
     _webview_window.events.closing += _on_closing
 
-    webview.start()  # bloquea el hilo principal hasta que la ventana se cierre de verdad
+    icon_path = os.path.join(BUNDLE_DIR, 'assets', 'icon.ico')
+    webview.start(icon=icon_path if os.path.exists(icon_path) else None)  # bloquea el hilo principal hasta que la ventana se cierre de verdad
 
     if not frozen:
         os._exit(0)

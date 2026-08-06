@@ -622,26 +622,48 @@ footer { text-align:center; font-size:.7rem; color:var(--text2); margin-top:20px
     </button>
     <div class="collapsible" id="credBody">
       <div class="col-body">
-        <div class="cred-row">
-          <div><label>App ID (client_id)</label><input type="text" id="mlClientId" placeholder="123456789"></div>
-          <div><label>Secret key</label><input type="password" id="mlClientSecret" placeholder="••••••••••••••••"></div>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px">
+          <label class="ap-chk-label" style="gap:8px;font-size:.85rem">
+            <input type="radio" name="mlAuthMode" value="shared" id="mlAuthModeShared" onchange="onMlAuthModeChange()">
+            <span><strong>Usar la app de EnvioBot</strong>
+              <div style="font-size:.73rem;color:var(--text2)">Recomendado — no hace falta crear nada en ML</div>
+            </span>
+          </label>
+          <label class="ap-chk-label" style="gap:8px;font-size:.85rem">
+            <input type="radio" name="mlAuthMode" value="own_app" id="mlAuthModeOwn" onchange="onMlAuthModeChange()">
+            <span><strong>Usar mi propia app</strong>
+              <div style="font-size:.73rem;color:var(--text2)">Para vendedores que ya tienen App ID/Secret propios</div>
+            </span>
+          </label>
         </div>
-        <button class="btn-s btn-sm" onclick="saveCredentials()">
-          Guardar credenciales<span class="saved-pill" id="credPill">✓</span>
-        </button>
-        <div class="hint" style="margin-top:10px">
-          <div style="font-weight:600;margin-bottom:6px">Cómo conseguir esto:</div>
-          <ol style="margin:0 0 8px 18px;padding:0;line-height:1.6">
-            <li>Entrá a <strong>developers.mercadolibre.com.ar</strong> con tu cuenta de vendedor.</li>
-            <li>Creá una aplicación nueva ("Crear aplicación").</li>
-            <li>En "Redirect URI" pegá exactamente esto:
-              <div style="display:flex;align-items:center;gap:6px;margin-top:4px">
-                <code style="background:var(--surf3);padding:1px 5px;border-radius:3px;font-size:.78rem">http://localhost:5050/auth/callback</code>
-                <button class="btn-s btn-sm" style="padding:2px 8px;font-size:.72rem" onclick="copyText('http://localhost:5050/auth/callback', this)">Copiar</button>
-              </div>
-            </li>
-            <li>Copiá el <strong>App ID</strong> y el <strong>Secret key</strong> que te muestra ML y pegalos arriba.</li>
-          </ol>
+
+        <div class="hint" id="mlSharedHint" style="display:none;margin-bottom:4px">
+          Con esta opción no hace falta crear ninguna app en developers.mercadolibre.com.ar — al
+          conectar tu cuenta desde Despachar, se usa la app de EnvioBot automáticamente.
+        </div>
+
+        <div id="mlOwnAppFields">
+          <div class="cred-row">
+            <div><label>App ID (client_id)</label><input type="text" id="mlClientId" placeholder="123456789"></div>
+            <div><label>Secret key</label><input type="password" id="mlClientSecret" placeholder="••••••••••••••••"></div>
+          </div>
+          <button class="btn-s btn-sm" onclick="saveCredentials()">
+            Guardar credenciales<span class="saved-pill" id="credPill">✓</span>
+          </button>
+          <div class="hint" style="margin-top:10px">
+            <div style="font-weight:600;margin-bottom:6px">Cómo conseguir esto:</div>
+            <ol style="margin:0 0 8px 18px;padding:0;line-height:1.6">
+              <li>Entrá a <strong>developers.mercadolibre.com.ar</strong> con tu cuenta de vendedor.</li>
+              <li>Creá una aplicación nueva ("Crear aplicación").</li>
+              <li>En "Redirect URI" pegá exactamente esto:
+                <div style="display:flex;align-items:center;gap:6px;margin-top:4px">
+                  <code style="background:var(--surf3);padding:1px 5px;border-radius:3px;font-size:.78rem">http://localhost:5050/auth/callback</code>
+                  <button class="btn-s btn-sm" style="padding:2px 8px;font-size:.72rem" onclick="copyText('http://localhost:5050/auth/callback', this)">Copiar</button>
+                </div>
+              </li>
+              <li>Copiá el <strong>App ID</strong> y el <strong>Secret key</strong> que te muestra ML y pegalos arriba.</li>
+            </ol>
+          </div>
         </div>
       </div>
     </div>
@@ -772,6 +794,10 @@ async function init() {
     document.getElementById('labelLanguage').value = labelLang;
     document.getElementById('tsplWarnHint').style.display = labelLang === 'tspl' ? '' : 'none';
     updateCalHint();
+    const mlAuthMode = c.ml_auth_mode ?? 'own_app';
+    document.getElementById('mlAuthModeShared').checked = mlAuthMode === 'shared';
+    document.getElementById('mlAuthModeOwn').checked    = mlAuthMode === 'own_app';
+    applyMlAuthModeVisibility(mlAuthMode);
     document.getElementById('mlClientId').value      = c.ml_client_id     ?? '';
     document.getElementById('mlClientSecret').value  = c.ml_client_secret ?? '';
     document.getElementById('tnClientId').value      = c.tn_client_id     ?? '';
@@ -992,6 +1018,22 @@ async function saveCredentials() {
     })
   });
   flashPill('credPill');
+}
+
+function applyMlAuthModeVisibility(mode) {
+  const shared = mode === 'shared';
+  document.getElementById('mlOwnAppFields').style.display = shared ? 'none' : '';
+  document.getElementById('mlSharedHint').style.display    = shared ? '' : 'none';
+}
+
+async function onMlAuthModeChange() {
+  const mode = document.querySelector('input[name="mlAuthMode"]:checked')?.value ?? 'own_app';
+  applyMlAuthModeVisibility(mode);
+  await fetch(API + '/config', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ ml_auth_mode: mode })
+  });
 }
 
 function flashPill(id) {

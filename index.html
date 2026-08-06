@@ -355,6 +355,9 @@ footer { text-align:center; font-size:.7rem; color:var(--text2); margin-top:20px
   </div>
 </header>
 
+<!-- Anuncio (versión nueva / mensaje del dueño de la app) -->
+<div id="announcementBanner" style="display:none"></div>
+
 <!-- Tabs -->
 <div class="tabs">
   <button class="tab-btn" data-tab="print" onclick="switchTab('print')">
@@ -688,7 +691,7 @@ footer { text-align:center; font-size:.7rem; color:var(--text2); margin-top:20px
 </div><!-- /tab-config -->
 
 
-<footer>Impresor Automático de Etiquetas · ZPL over TCP 9100 · local</footer>
+<footer>Impresor Automático de Etiquetas · local <span id="appVersionFooter"></span></footer>
 
 <script>
 const API = 'http://localhost:5050';
@@ -784,6 +787,9 @@ async function init() {
     document.getElementById('lblTypeCombo').checked    = labelType === 'combo';
     document.getElementById('dieCutMm').value = c.ml_die_cut_mm ?? 40;
     document.getElementById('dieCutConfig').style.display = labelType === 'combo' ? '' : 'none';
+    const verEl = document.getElementById('appVersionFooter');
+    if (verEl && c.app_version) verEl.textContent = '· v' + c.app_version;
+    if (c.announcement) showAnnouncement(c.announcement);
   } catch(e) {
     console.warn('config load error', e);
   }
@@ -1810,6 +1816,11 @@ function connectSSE() {
     addPrintErrorAlert(d.order_id, d.shipment_id, d.buyer, d.error);
   });
 
+  sseSource.addEventListener('announcement', e => {
+    const d = JSON.parse(e.data);
+    showAnnouncement(d);
+  });
+
   sseSource.addEventListener('possible_cancel', e => {
     const d = JSON.parse(e.data);
     addCancelAlert(d.order_id, d.shipment_id, d.buyer);
@@ -1978,6 +1989,45 @@ function renderCancelAlerts() {
       </div>
       <button class="cancel-alert-close" onclick="dismissCancelAlert('${a.orderId}')">✓ Entendido</button>
     </div>`).join('');
+}
+
+// ── Anuncio (versión nueva / mensaje del dueño de la app) ─────────────────────
+// Se descarta por versión, guardado en localStorage — así no vuelve a aparecer
+// para la misma versión aunque se cierre y reabra la app, pero si el dueño
+// carga una versión más nueva todavía, se vuelve a mostrar.
+let _announcement = null; // {version, message, download_url} o null
+
+function showAnnouncement(a) {
+  if (!a || !a.version) return;
+  if (localStorage.getItem('enviobot_announcement_dismissed') === a.version) return;
+  _announcement = a;
+  renderAnnouncementBanner();
+}
+
+function dismissAnnouncement() {
+  if (_announcement) localStorage.setItem('enviobot_announcement_dismissed', _announcement.version);
+  _announcement = null;
+  renderAnnouncementBanner();
+}
+
+function renderAnnouncementBanner() {
+  const area = document.getElementById('announcementBanner');
+  if (!area) return;
+  if (!_announcement) { area.style.display = 'none'; area.innerHTML = ''; return; }
+  area.style.display = '';
+  const dl = _announcement.download_url
+    ? `<a class="btn-s btn-sm" href="${escapeHtml(_announcement.download_url)}" target="_blank" rel="noopener" style="text-decoration:none;margin-right:6px">Descargar</a>`
+    : '';
+  area.innerHTML = `
+    <div class="cancel-alert" style="border-color:rgba(245,166,35,.4);background:rgba(245,166,35,.08)">
+      <span class="cancel-alert-icon">🚀</span>
+      <div class="cancel-alert-body">
+        <div class="cancel-alert-title">Nueva versión disponible — v${escapeHtml(_announcement.version)}</div>
+        <div class="cancel-alert-sub">${escapeHtml(_announcement.message || '')}</div>
+      </div>
+      ${dl}
+      <button class="cancel-alert-close" onclick="dismissAnnouncement()">✓ Entendido</button>
+    </div>`;
 }
 
 // ── Alertas de auto-impresión fallida ─────────────────────────────────────────

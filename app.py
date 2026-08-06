@@ -1,4 +1,10 @@
 from flask import Flask, request, jsonify, send_from_directory, redirect
+
+# Primera vez que la app tiene un número de versión formal — todo lo de antes
+# queda sin numerar, no importa. Se usa para avisar "hay una versión nueva"
+# (ver _check_announcement) y se muestra en la UI para soporte remoto.
+APP_VERSION = '1.0.0'
+
 import socket
 import json
 import os
@@ -584,6 +590,77 @@ def _push_event(event_type, data):
                 pass
 
 
+# ── Anuncios (versión nueva / mensajes a todos los clientes) ───────────────────
+# Hilo aparte del polling de ML a propósito: _poll_worker no hace nada sin
+# sesión de ML activa Y monitoreo prendido, pero un aviso de "hay versión
+# nueva" le tiene que llegar a CUALQUIER usuario, tenga o no ML conectado.
+
+_ANNOUNCE_CHECK_INTERVAL = 3600  # 1 hora
+
+# Cache en memoria del anuncio activo — así /config no le pega a la red en
+# cada pedido, solo lee lo que este hilo actualizó. None = no hay nada
+# activo (o la versión del servidor no es más nueva que la instalada).
+_cached_announcement = None
+_announce_notified_version = None  # para no repetir el toast/bandeja en la misma sesión
+
+
+def _version_gt(a, b):
+    """Compara dos versiones tipo '1.2.0' — True si a > b."""
+    def parts(v):
+        return tuple(int(x) if x.isdigit() else 0 for x in str(v).split('.'))
+    return parts(a) > parts(b)
+
+
+def _refresh_announcement_cache():
+    """Actualiza el cache en memoria del anuncio activo desde el servidor.
+    /config expone este cache en cada pedido — así el aviso no depende de
+    "pescar" el evento SSE en el momento justo: si la app se cerró y se
+    volvió a abrir, lo ve apenas carga. Además, la primera vez que aparece
+    una versión nueva durante esta sesión, empuja SSE + notificación de
+    bandeja para no depender de que el usuario recargue la página."""
+    global _cached_announcement, _announce_notified_version
+    if not http:
+        return
+    try:
+        r = http.post(f'{_LICENSE_SERVER}/announcement.php',
+                       json={'secret': _LICENSE_SECRET}, timeout=8)
+        data = r.json()
+    except Exception:
+        return
+    if not data.get('ok'):
+        return
+
+    latest = data.get('latest_version') or APP_VERSION
+    active = bool(data.get('active')) and _version_gt(latest, APP_VERSION)
+
+    if not active:
+        _cached_announcement = None
+        return
+
+    _cached_announcement = {
+        'version':      latest,
+        'message':      data.get('message') or f'Hay una nueva versión de EnvioBot ({latest}) disponible.',
+        'download_url': data.get('download_url') or '',
+    }
+
+    if _announce_notified_version != latest:
+        _announce_notified_version = latest
+        _push_event('announcement', _cached_announcement)
+        tray_notify('EnvioBot — Nueva versión disponible', _cached_announcement['message'])
+
+
+def _announcement_worker():
+    """Hilo daemon independiente del polling de ML — chequea periódicamente
+    sin depender de si hay sesión de MercadoLibre ni de si el monitoreo de
+    auto-impresión está activado."""
+    while True:
+        try:
+            _refresh_announcement_cache()
+        except Exception:
+            logger.exception('_announcement_worker: fallo en el chequeo')
+        time.sleep(_ANNOUNCE_CHECK_INTERVAL)
+
+
 # ── Background polling worker ─────────────────────────────────────────────────
 
 def _poll_worker():
@@ -879,6 +956,8 @@ def get_config():
     # No exponer tokens ni campos internos al frontend
     _hidden = {'ml_access_token', 'ml_refresh_token', 'ml_token_expires_at', 'tn_access_token', 'tn_store_id'}
     safe = {k: v for k, v in cfg.items() if k not in _hidden and not k.startswith('_')}
+    safe['app_version'] = APP_VERSION
+    safe['announcement'] = _cached_announcement
     return jsonify(safe)
 
 
@@ -3062,6 +3141,7 @@ def start():
     _restore_poll_state()
     threading.Thread(target=run_flask, daemon=True).start()
     threading.Thread(target=_poll_worker, daemon=True).start()
+    threading.Thread(target=_announcement_worker, daemon=True).start()
     time.sleep(1.2)
 
     frozen = getattr(sys, 'frozen', False)

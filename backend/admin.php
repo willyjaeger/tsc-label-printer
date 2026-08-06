@@ -127,6 +127,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
         }
 
+        // Guardar anuncio (versión nueva / mensaje a todos los clientes)
+        if (isset($_POST['action']) && $_POST['action'] === 'save_announcement') {
+            $version = trim($_POST['latest_version'] ?? '1.0.0');
+            $message = trim($_POST['message'] ?? '');
+            $url     = trim($_POST['download_url'] ?? '');
+            $active  = isset($_POST['active']) ? 1 : 0;
+            $stmt = $db->prepare("INSERT INTO app_announcement (id, latest_version, message, download_url, active)
+                                   VALUES (1, ?, ?, ?, ?)
+                                   ON DUPLICATE KEY UPDATE latest_version=VALUES(latest_version),
+                                       message=VALUES(message), download_url=VALUES(download_url), active=VALUES(active)");
+            $stmt->bind_param('sssi', $version, $message, $url, $active);
+            $stmt->execute();
+            $msg = 'Anuncio guardado.';
+        }
+
         // Logout
         if (isset($_POST['action']) && $_POST['action'] === 'logout') {
             session_destroy();
@@ -166,10 +181,16 @@ function status_badge($status) {
 // ── Datos para la vista ───────────────────────────────────────────────────────
 
 $licenses = [];
+$announcement = null;
 if ($_SESSION['auth'] ?? false) {
     if (!isset($db)) $db = db_connect();
     $res = $db->query("SELECT * FROM licenses ORDER BY created_at DESC");
     while ($row = $res->fetch_assoc()) $licenses[] = $row;
+
+    // Si todavía no se corrió setup_announcement.php la tabla no existe —
+    // no romper el panel de licencias por eso, solo dejar el form en blanco.
+    $ares = @$db->query("SELECT * FROM app_announcement WHERE id = 1");
+    if ($ares) $announcement = $ares->fetch_assoc();
 }
 
 $auth = $_SESSION['auth'] ?? false;
@@ -386,6 +407,41 @@ tr:hover td { background: rgba(255,255,255,0.02); }
 <?php else: ?>
 <p style="color:#555;margin-top:20px">No hay licencias aún. Creá la primera arriba.</p>
 <?php endif; ?>
+
+<!-- Anuncios (versión nueva / mensaje a todos los clientes) -->
+<div class="create-panel" style="margin-top:20px">
+  <h3>Anuncio para todos los clientes</h3>
+  <p style="color:#888;font-size:12px;margin-bottom:14px">
+    Cuando "Activo" está tildado y la versión de acá es más nueva que la que tiene instalada
+    cada cliente, EnvioBot le muestra este mensaje (con el link de descarga si lo cargaste).
+    Se avisa una sola vez por versión, no en cada apertura.
+  </p>
+  <form method="post">
+    <input type="hidden" name="action" value="save_announcement">
+    <div class="form-row">
+      <label>Última versión
+        <input type="text" name="latest_version" placeholder="1.1.0"
+               value="<?= htmlspecialchars($announcement['latest_version'] ?? '1.0.0') ?>" style="min-width:100px">
+      </label>
+      <label>Link de descarga
+        <input type="text" name="download_url" placeholder="https://..."
+               value="<?= htmlspecialchars($announcement['download_url'] ?? '') ?>" style="min-width:280px">
+      </label>
+      <label style="flex-direction:row;align-items:center;gap:6px">
+        <input type="checkbox" name="active" style="width:auto" <?= !empty($announcement['active']) ? 'checked' : '' ?>>
+        Activo
+      </label>
+    </div>
+    <div style="margin-top:10px">
+      <label style="display:flex;flex-direction:column;gap:4px;font-size:12px;color:#888">
+        Mensaje
+        <textarea name="message" rows="3" placeholder="Ej: Hay una versión nueva con impresión en hoja A4. Descargala acá."
+          style="padding:8px 12px;background:#252830;border:1px solid rgba(255,255,255,0.1);border-radius:8px;color:#e8e9ed;font-size:13px;font-family:inherit;resize:vertical"><?= htmlspecialchars($announcement['message'] ?? '') ?></textarea>
+      </label>
+    </div>
+    <button class="btn btn-primary" type="submit" style="margin-top:12px">Guardar anuncio</button>
+  </form>
+</div>
 
 <!-- Modal extender vencimiento -->
 <div class="modal-bg" id="extendModal">

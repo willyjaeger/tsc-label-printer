@@ -910,6 +910,20 @@ def printer_test():
     guardada como respaldo si no vienen en el pedido."""
     body = request.get_json(silent=True) or {}
     cfg = load_config()
+    output_mode = body.get('output_mode') or cfg.get('output_mode', 'thermal')
+
+    if output_mode == 'a4':
+        name = body.get('a4_printer_name') or cfg.get('a4_printer_name', '')
+        if not name:
+            return jsonify({'ok': False, 'error': 'Elegí una impresora de la lista primero.'})
+        try:
+            import win32print
+            h = win32print.OpenPrinter(name)
+            win32print.ClosePrinter(h)
+            return jsonify({'ok': True, 'detail': f'"{name}" responde.'})
+        except Exception as e:
+            return jsonify({'ok': False, 'error': f'No se pudo abrir "{name}": {e}'})
+
     conn_type = body.get('connection_type') or cfg.get('connection_type', 'network')
 
     if conn_type == 'usb':

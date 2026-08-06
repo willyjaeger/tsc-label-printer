@@ -756,6 +756,7 @@ def _poll_worker():
                 msg = f'{buyer_preview}' if n == 1 else f'{n} pedidos nuevos'
                 tray_notify('Pedido nuevo en ML', msg + ' — Hacé click para ver')
                 if do_auto_print:
+                    want_a4 = cfg.get('output_mode') == 'a4'
                     for o in new_orders:
                         sid = o.get('shipping', {}).get('id')
                         if not sid:
@@ -763,7 +764,7 @@ def _poll_worker():
                         buyer_name = (o.get('_shipment') or {}).get('receiver_name') \
                                      or (o.get('buyer') or {}).get('nickname', '')
                         try:
-                            zpl, is_zpl, err = _fetch_ml_label(sid, token, cfg)
+                            zpl, is_zpl, err = _fetch_ml_label(sid, token, cfg, force_pdf=want_a4)
                             if err:
                                 logger.warning('auto-print: shipment %s (%s) — %s', sid, buyer_name, err)
                                 _push_event('print_error', {
@@ -787,8 +788,16 @@ def _poll_worker():
                             }
                             corr = next_correlative()
                             order_data['correlative'] = corr
-                            payload, _ = _print_ml_order(zpl, is_zpl, order_data, cfg)
-                            print_raw(cfg, payload)
+                            if want_a4:
+                                label_img = label_image_for_a4(
+                                    zpl, width_mm=float(cfg.get('label_width_mm', 100)),
+                                    height_mm=float(cfg.get('label_height_mm', 150)),
+                                    dpi=int(cfg.get('dpi', 203)))
+                                page = _build_a4_page(label_img, order_data, cfg)
+                                print_a4_image(cfg.get('a4_printer_name'), page)
+                            else:
+                                payload, _ = _print_ml_order(zpl, is_zpl, order_data, cfg)
+                                print_raw(cfg, payload)
                             _save_printed_order(order_data)
                             _push_event('auto_printed', {
                                 'shipment_id': sid,

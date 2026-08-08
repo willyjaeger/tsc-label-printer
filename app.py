@@ -1443,7 +1443,23 @@ def auth_status():
 
 @app.route('/auth/logout', methods=['POST'])
 def auth_logout():
-    cfg = load_config()
+    """Revoca el permiso del lado de ML (no solo borra los tokens locales) —
+    así el usuario puede realmente decir "no quiero esto más": ML deja de
+    darle acceso a EnvioBot a su cuenta, no solo se desloguea de esta PC."""
+    cfg       = load_config()
+    token     = cfg.get('ml_access_token')
+    user_id   = cfg.get('ml_user_id')
+    shared    = cfg.get('ml_auth_mode') == 'shared'
+    client_id = ML_SHARED_CLIENT_ID if shared else cfg.get('ml_client_id')
+    if token and user_id and client_id:
+        try:
+            http.delete(
+                f'{ML_API}/users/{user_id}/applications/{client_id}',
+                headers={'Authorization': f'Bearer {token}'},
+                timeout=8,
+            )
+        except Exception as e:
+            logger.warning('ML revoke en logout falló (se borra igual localmente): %s', e)
     for k in ('ml_access_token', 'ml_refresh_token', 'ml_token_expires_at', 'ml_user_id'):
         cfg.pop(k, None)
     save_config(cfg)

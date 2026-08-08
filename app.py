@@ -67,7 +67,7 @@ DEFAULT_CONFIG = {
     'dpi': 203,
     'ml_label_type': 'standard',   # 'standard' = 100x150 (2 etiquetas) | 'combo' = 100x190 con troquel
     'ml_die_cut_mm': 40,           # altura del troquel en mm (solo para combo)
-    'ml_auth_mode': 'own_app',      # 'own_app' (default, sin cambios) | 'shared' (app de EnvioBot, sin registrar nada)
+    'ml_auth_mode': 'shared',       # 'shared' (default, app de EnvioBot, sin registrar nada) | 'own_app' (legacy, sin UI)
     'ml_client_id': '',
     'ml_client_secret': '',
     'tn_client_id': '',
@@ -136,7 +136,13 @@ def load_config():
     if os.path.exists(CONFIG_FILE):
         try:
             with open(CONFIG_FILE, encoding='utf-8') as f:
-                return {**DEFAULT_CONFIG, **json.load(f)}
+                saved = json.load(f)
+            cfg = {**DEFAULT_CONFIG, **saved}
+            if 'ml_auth_mode' not in saved:
+                # config.json de antes de que existiera 'shared': si ya tenía su propia
+                # app ML configurada, no migrarlo — seguiría rompiendo su conexión actual.
+                cfg['ml_auth_mode'] = 'own_app' if cfg.get('ml_client_id') else 'shared'
+            return cfg
         except Exception:
             pass
     return DEFAULT_CONFIG.copy()

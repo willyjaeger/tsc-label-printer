@@ -621,7 +621,7 @@ footer { text-align:center; font-size:.7rem; color:var(--text2); margin-top:20px
       <span>MercadoLibre</span><span class="col-arrow" id="credArrow">▾</span>
     </button>
     <div class="collapsible" id="credBody">
-      <div class="col-body">
+      <div class="col-body" id="mlConfigCardBody">
         <div class="hint" style="margin-bottom:10px">
           No hace falta crear ninguna app ni conseguir credenciales — EnvioBot ya tiene la suya.
           Solo conectá tu cuenta de vendedor.
@@ -1477,9 +1477,30 @@ async function printSelected() {
 }
 
 // ── Render ────────────────────────────────────────────
+function renderMlConfigCard() {
+  const el = document.getElementById('mlConfigCardBody');
+  if (!el) return;
+  if (mlUser) {
+    const nick = mlUser.nickname ?? `Usuario #${mlUser.user_id}`;
+    el.innerHTML = `
+      <div class="hint" style="margin-bottom:10px">
+        Conectado como <strong>${nick}</strong>.
+      </div>
+      <button class="btn-d btn-sm" onclick="mlLogout()">Desconectar</button>`;
+  } else {
+    el.innerHTML = `
+      <div class="hint" style="margin-bottom:10px">
+        No hace falta crear ninguna app ni conseguir credenciales — EnvioBot ya tiene la suya.
+        Solo conectá tu cuenta de vendedor.
+      </div>
+      <button class="btn-ml" onclick="loginWithML()">Conectar con MercadoLibre</button>`;
+  }
+}
+
 function renderOrdersArea(loading = false, errorMsg = null) {
   const area = document.getElementById('ordersArea');
   renderAutoprintBar();
+  renderMlConfigCard();
 
   if (!mlUser) {
     area.innerHTML = `

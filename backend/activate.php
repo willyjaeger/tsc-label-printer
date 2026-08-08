@@ -53,6 +53,22 @@ if ($row['type'] === 'OWNER') {
     exit;
 }
 
+// DEMO: si esta PC ya activó otra licencia DEMO antes (con otra key, ej. otro
+// mail), no dejar activar una nueva — evita que se "renueve" la prueba
+// gratis pidiendo claves nuevas. PAID/OWNER en la misma PC no se bloquean
+// (una persona real puede tener varias licencias pagas en su PC).
+if ($row['type'] === 'DEMO' && !$row['fingerprint']) {
+    $stmt3 = $db->prepare("SELECT id FROM licenses WHERE fingerprint = ? AND type = 'DEMO' AND id != ?");
+    $stmt3->bind_param('si', $fp, $row['id']);
+    $stmt3->execute();
+    $dup = $stmt3->get_result()->fetch_assoc();
+    $stmt3->close();
+    if ($dup) {
+        echo json_encode(['ok' => false, 'reason' => 'demo_already_used']);
+        exit;
+    }
+}
+
 // Sin fingerprint aún: primera activación, graba la máquina
 if (!$row['fingerprint']) {
     $stmt2 = $db->prepare("UPDATE licenses SET fingerprint = ?, activated_at = NOW(), last_validated_at = NOW() WHERE id = ?");

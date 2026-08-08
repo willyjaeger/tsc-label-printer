@@ -1115,6 +1115,7 @@ def license_activate():
         'revoked':       'Esta licencia fue desactivada.',
         'expired':       'Esta licencia está vencida.',
         'wrong_machine': 'Esta licencia ya está activada en otra PC. Contactá al vendedor.',
+        'demo_already_used': 'Esta PC ya usó su período de prueba. Contactá al vendedor si necesitás extenderlo.',
         'server_unreachable': 'No se pudo conectar al servidor. Verificá tu internet.',
     }
     return jsonify({'ok': False, 'error': messages.get(reason, f'Error: {reason}')}), 400
